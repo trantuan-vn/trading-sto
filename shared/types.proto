@@ -1,0 +1,6 @@
+syntax = "proto3";
+
+message Token {
+  string symbol = 1;
+  double price = 2;
+}

@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-sto
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: trading-sto
+  template:
+    metadata:
+      labels:
+        app: trading-sto
+    spec:
+      containers:
+      - name: web
+        image: trading-sto-web:latest
+        ports:
+        - containerPort: 3000
+      - name: backend
+        image: trading-sto-backend:latest
+        ports:
+        - containerPort: 3001

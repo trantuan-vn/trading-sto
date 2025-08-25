@@ -1,0 +1,19 @@
+name: Deploy to K8s
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 8
+    - name: Build Docker images
+      run: |
+        docker build -f Dockerfile.web -t trading-sto-web .
+        docker build -f Dockerfile.backend -t trading-sto-backend .
+    - name: Deploy to K8s
+      run: kubectl apply -f infra/kubernetes

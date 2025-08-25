@@ -1,36 +1,120 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/create-next-app).
+# Next.js Admin Template with TypeScript & Shadcn UI
+
+Includes multiple dashboards, authentication layouts, customizable theme presets, and more.
+
+<img src="https://github.com/arhamkhnz/next-shadcn-admin-dashboard/blob/main/media/dashboard.png?version=4" alt="Dashboard Screenshot">
+
+The idea behind this dashboard aims to offer an alternative to typical admin templates. Most I came across, paid or free, felt cluttered, outdated, or too rigid in design.
+
+I’ve taken design inspiration from various sources. Feel free to open an issue or reach out for credits.
+
+> **View demo:** [studio admin](https://next-shadcn-admin-dashboard.vercel.app)
+
+> [!TIP]
+> I’m also working on Nuxt.js, Svelte, and React (Vite + TanStack Router) versions of this dashboard. They’ll be live soon.
+
+## Features
+
+- Built with Next.js 15, TypeScript, and Shadcn UI
+- Responsive and mobile-friendly design
+- Customizable theme presets (light/dark modes with color schemes like Tangerine, Brutalist, and more)
+- Multiple layout options (collapsible sidebar, content width variations)
+- Authentication layouts and screens
+- Dashboard screens for analytics, reports, and overview
+- Prebuilt dashboard screens and reusable UI components  
+- Includes 5 out of 15 planned screens
+- RBAC (Role-Based Access Control) with config-driven UI and multi-tenant support *(planned)*
+
+> [!NOTE]
+> The default version of the dashboard uses the **shadcn neutral** theme.  
+> It also supports multiple color themes inspired by [Tweakcn](https://tweakcn.com), including:
+>
+> - Tangerine  
+> - Neo Brutalism  
+> - Soft Pop  
+>
+> You can add more presets by following the same structure as the existing ones.
+
+> Looking for the **Next.js 14 + Tailwind CSS v3** version?
+> Check out the [`archive/next14-tailwindv3`](https://github.com/arhamkhnz/next-shadcn-admin-dashboard/tree/archive/next14-tailwindv3) branch.  
+> It uses a different color theme and isn’t actively maintained, but I’m trying to keep it updated with the latest changes and screens.
+
+## Tech Stack
+
+- **Framework**: Next.js 15 (App Router), TypeScript, Tailwind CSS v4  
+- **Components**: Shadcn UI  
+- **Validation**: Zod  
+- **Forms & State**: React Hook Form, Zustand  
+- **Data Table**: TanStack Table  
+- **Tooling**: ESLint, Prettier, Husky
+
+## Screens
+
+✅ Available  
+🚧 Coming Soon
+
+### Dashboards
+- ✅ Default
+- ✅ CRM
+- ✅ Finance
+- 🚧 Analytics
+- 🚧 eCommerce
+- 🚧 Academy
+- 🚧 Logistics
+
+### Pages
+- 🚧 Email
+- 🚧 Chat
+- 🚧 Calendar
+- 🚧 Kanban
+- 🚧 Invoice
+- 🚧 Users
+- 🚧 Roles
+- ✅ Authentication (4 screens)
+
+## Colocation File System Architecture
+
+Pages, components, and logic are grouped by feature. Each route folder contains everything it needs. Shared UI, hooks, and config live at the top level, keeping the codebase modular and scalable as the app grows.
+
+Check out [this repo](https://github.com/arhamkhnz/next-colocation-template) for the full file structure and examples.
 
 ## Getting Started
 
-First, run the development server:
+You can run this project locally, or deploy it instantly with Vercel.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+### Deploy with Vercel
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Farhamkhnz%2Fnext-shadcn-admin-dashboard)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+_Clone and deploy your own copy of this project in one click._
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load Inter, a custom Google Font.
+### Run locally
 
-## Learn More
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/arhamkhnz/next-shadcn-admin-dashboard.git
+   ```
+   
+2. **Install dependencies**
+   ```bash
+    npm install
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+3. **Start the development server**
+   ```bash
+   npm run dev
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Once running, the app will be available at [http://localhost:3000](http://localhost:3000)
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+---
 
-## Deploy on Vercel
+> [!IMPORTANT]  
+> This project is frequently updated. If you’re working from a fork or a previously cloned copy, check for the latest changes before syncing. Some updates may include breaking changes.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+---
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Feel free to open issues, feature requests, or start a discussion if you'd like to contribute or suggest improvements.
+
+
+**Happy Vibe Coding!**

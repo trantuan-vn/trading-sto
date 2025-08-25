@@ -3,5 +3,6 @@
     {
       "mode": "auto"
     }
-  ]
+  ],
+  "rust-analyzer.cargo.workspaceRoot": "${workspaceFolder}/apps/backend"
 }
