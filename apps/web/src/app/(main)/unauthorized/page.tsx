@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Lock } from "lucide-react";
 
+export const runtime = 'edge'; 
 export default function page() {
   return (
     <div className="bg-background flex min-h-dvh flex-col items-center justify-center px-4 py-12 sm:px-6 lg:px-8">

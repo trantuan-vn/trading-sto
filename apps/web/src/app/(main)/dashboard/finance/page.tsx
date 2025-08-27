@@ -3,6 +3,7 @@ import { CurrencyExchange } from "./_components/currency-exchange";
 import { ExpenseSummary } from "./_components/expense-summary";
 import { FinancialOverview } from "./_components/financial-overview";
 
+export const runtime = 'edge'; 
 export default function Page() {
   return (
     <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

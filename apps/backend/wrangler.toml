@@ -1,0 +1,9 @@
+name = "trading-sto-backend"
+main = "target/wasm32-unknown-unknown/release/trading-sto-backend.wasm"
+compatibility_date = "2025-08-24"
+workers_dev = true
+
+[[kv_stores]]
+binding = "CHALLENGES_KV"
+id = "your-kv-store-id-here"  # Replace with actual KV Store ID
+preview_id = "your-preview-kv-store-id"  # Replace with preview KV Store ID

@@ -12,6 +12,7 @@ const nextConfig = {
       },
     ];
   },
+  output: 'export', // Nếu bạn muốn xuất static site
 }
 
 export default nextConfig

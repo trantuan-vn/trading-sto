@@ -1,82 +1,83 @@
-use actix_web::{cookie::Cookie, web, HttpResponse};
-use actix_web::cookie::time::Duration as ActixDuration;
-use log::{error, info};
-use serde_json::json;
+use worker::{console_log, Result, Error};
+use crate::models::user::{NewUser, User, UserLogin};
+use crate::utils::crypto::{hash_password, verify_password, generate_jwt};
+use crate::config::AppConfig;
+use std::collections::HashMap;
 
-use crate::models::{AppState, LoginRequest};
-use crate::utils::crypto::{create_jwt, refresh_jwt, verify_signature};
+// Đây là một ví dụ đơn giản để lưu trữ người dùng trong bộ nhớ.
+// Trong ứng dụng thực tế, bạn sẽ sử dụng KV store hoặc D1 database.
+static mut USERS_DB: Option<HashMap<String, User>> = None;
 
-pub fn generate_challenge(address: &str, state: &AppState) -> String {
-    let challenge = format!("Login challenge: {}", rand::random::<u64>());
-    state
-        .challenges
-        .lock()
-        .unwrap()
-        .insert(address.to_string(), challenge.clone());
-    challenge
+pub fn initialize_users_db() {
+    unsafe {
+        if USERS_DB.is_none() {
+            USERS_DB = Some(HashMap::new());
+            console_log!("Users database initialized.");
+        }
+    }
 }
 
-pub fn login_user(body: &LoginRequest, state: &web::Data<AppState>) -> HttpResponse {
-    let challenge_map = &mut *state.challenges.lock().unwrap();
-    let challenge = match challenge_map.get(&body.address) {
-        Some(c) => c.clone(),
-        None => {
-            error!("No challenge found for address: {}", body.address);
-            return HttpResponse::BadRequest().body("No challenge");
-        }
+pub async fn register_user(new_user: NewUser, app_config: &AppConfig) -> Result<User> {
+    initialize_users_db();
+    let hashed_password = hash_password(&new_user.password);
+    let user_id = uuid::Uuid::new_v4().to_string(); // Tạo ID ngẫu nhiên
+    let user = User {
+        id: user_id.clone(),
+        username: new_user.username.clone(),
+        password_hash: hashed_password,
     };
 
-    if !verify_signature(&challenge, &body.signature, &body.address) {
-        error!("Invalid signature for address: {}", body.address);
-        return HttpResponse::Unauthorized().body("Invalid signature");
+    unsafe {
+        if let Some(db) = USERS_DB.as_mut() {
+            if db.contains_key(&new_user.username) {
+                return Err(Error::RustError("Username already exists".to_string()));
+            }
+            db.insert(new_user.username, user.clone());
+            console_log!("User registered: {}", user.username);
+            Ok(user)
+        } else {
+            Err(Error::RustError("Users database not initialized".to_string()))
+        }
     }
-
-    let token = create_jwt(&body.address);
-
-    let cookie = Cookie::build("access_token", token)
-        .http_only(true)
-        .secure(true)  // Optimized: Enable secure flag for production
-        .same_site(actix_web::cookie::SameSite::Strict)  // Optimized: Prevent CSRF
-        .max_age(ActixDuration::seconds(3600))
-        .finish();
-
-    info!("User logged in: {}", body.address);
-    HttpResponse::Ok().cookie(cookie).json(json!({ "success": true }))
 }
 
-pub fn logout_user() -> HttpResponse {
-    let cookie = Cookie::build("access_token", "")
-        .http_only(true)
-        .secure(true)
-        .same_site(actix_web::cookie::SameSite::Strict)
-        .max_age(ActixDuration::seconds(0))
-        .finish();
-
-    info!("User logged out");
-    HttpResponse::Ok().cookie(cookie).json(json!({ "success": true }))
+pub async fn login_user(user_login: UserLogin, app_config: &AppConfig) -> Result<String> {
+    initialize_users_db();
+    unsafe {
+        if let Some(db) = USERS_DB.as_ref() {
+            if let Some(user) = db.get(&user_login.username) {
+                if verify_password(&user_login.password, &user.password_hash) {
+                    let token = generate_jwt(user.id.clone(), &app_config.jwt_secret)?;
+                    console_log!("User logged in: {}", user.username);
+                    Ok(token)
+                } else {
+                    Err(worker::Error::from("Invalid credentials").with_status(401))
+                }
+            } else {
+                Err(worker::Error::from("Invalid credentials").with_status(401))
+            }
+        } else {
+            Err(worker::Error::from("Users database not initialized"))
+        }
+    }
 }
 
-pub fn refresh_token(old_token: Option<&str>) -> HttpResponse {
-    match old_token {
-        Some(t) => match refresh_jwt(t) {
-            Some(new_token) => {
-                let cookie = Cookie::build("access_token", new_token)
-                    .http_only(true)
-                    .secure(true)
-                    .same_site(actix_web::cookie::SameSite::Strict)
-                    .max_age(ActixDuration::seconds(3600))
-                    .finish();
-                info!("Token refreshed");
-                HttpResponse::Ok().cookie(cookie).json(json!({ "success": true }))
+pub async fn get_user_by_id(user_id: &str) -> Result<Option<User>> {
+    initialize_users_db();
+    unsafe {
+        if let Some(db) = USERS_DB.as_ref() {
+            // Tìm kiếm người dùng bằng ID
+            // Lưu ý: `HashMap` hiện tại không tối ưu cho tìm kiếm bằng ID mà chỉ bằng username.
+            // Cần một cấu trúc dữ liệu khác hoặc map ID -> username.
+            // Để đơn giản, ta sẽ duyệt qua. Trong thực tế, dùng database có index.
+            for user in db.values() {
+                if user.id == user_id {
+                    return Ok(Some(user.clone()));
+                }
             }
-            None => {
-                error!("Invalid token for refresh");
-                HttpResponse::Unauthorized().body("Invalid token")
-            }
-        },
-        None => {
-            error!("No token provided for refresh");
-            HttpResponse::Unauthorized().body("No token")
+            Ok(None)
+        } else {
+            Err(Error::RustError("Users database not initialized".to_string()))
         }
     }
 }

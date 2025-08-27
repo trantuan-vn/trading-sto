@@ -1,10 +1,11 @@
 import Link from "next/link";
 
-import { Command } from "lucide-react";
+import { Command } from "lucide-react"; 
 
 import { RegisterForm } from "../../_components/register-form";
 import { GoogleButton } from "../../_components/social-auth/google-button";
 
+export const runtime = 'edge'; 
 export default function RegisterV1() {
   return (
     <div className="flex h-dvh">

@@ -1,17 +1,21 @@
-use actix_web::{get, web, Error, HttpRequest, HttpResponse};
-use actix_web_actors::ws;
+use worker::{console_log, Request, Response, Result, RouteContext, WebSocketPair};
+use crate::services::ws_service;
 
-use crate::services::ws_service::WsSession;
-use crate::utils::crypto::verify_jwt;
+pub async fn handle_websocket(req: Request, _ctx: RouteContext<()>) -> Result<Response> {
+    // Kiểm tra xem yêu cầu có phải là WebSocket upgrade request không
+    if req.headers().get("upgrade")?.map_or(false, |h| h.eq_ignore_ascii_case("websocket")) {
+        console_log!("Handling WebSocket upgrade request.");
 
-#[get("/")]
-pub async fn ws_route(req: HttpRequest, stream: web::Payload) -> Result<HttpResponse, Error> {
-    let token = req.cookie("access_token").map(|c| c.value().to_string());
-    if token.is_none() || verify_jwt(token.as_deref().unwrap()).is_none() {
-        return Ok(HttpResponse::Unauthorized().body("Invalid token for WS"));
+        // Tạo một cặp WebSocket
+        let pair = WebSocketPair::new()?;
+
+        // Chuyển kết nối WebSocket cho service xử lý
+        ws_service::handle_ws_connection(pair.client).await?;
+
+        // Trả về phản hồi upgrade WebSocket cho client
+        // (Được đề cập trong worker-sys/src/ext/websocket.rs [14])
+        Ok(pair.response())
+    } else {
+        Response::error("Expected a WebSocket upgrade request", 400)
     }
-
-    let claims = verify_jwt(token.as_deref().unwrap()).unwrap();
-    let ws = WsSession::new(claims.address);
-    ws::start(ws, &req, stream)
 }

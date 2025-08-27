@@ -1,69 +1,52 @@
-use std::rc::Rc;
-use std::task::{Context, Poll};
+use async_trait::async_trait;
+use worker::{console_log, Request, Response, Result, Error, RouteContext};
+use crate::config::AppConfig;
+use crate::utils::crypto::decode_jwt;
+use crate::models::token::Claims;
+use serde_json::json;
 
-use actix_web::{
-    dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    Error, HttpResponse,
-};
-use actix_web::body::{BoxBody, EitherBody};
-use futures::future::{ready, Ready, LocalBoxFuture};
+// Context key để lưu trữ thông tin Claims của người dùng sau khi xác thực
+pub const AUTH_CONTEXT_KEY: &str = "auth_claims";
 
-use crate::utils::crypto::verify_jwt;
-
-pub struct AuthMiddleware;
-
-impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
+// Middleware function
+pub fn authenticate<F>(handler: F) -> impl Fn(Request, RouteContext<()>) -> Result<Response>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    B: 'static,
+    F: Fn(Request, RouteContext<()>) -> Result<Response> + Send + Sync + 'static,
 {
-    type Response = ServiceResponse<EitherBody<B, BoxBody>>;
-    type Error = Error;
-    type Transform = AuthMiddlewareService<S>;
-    type InitError = ();
-    type Future = Ready<Result<Self::Transform, Self::InitError>>;
+    move |mut req: Request, ctx: RouteContext<()>| {
+        let app_config = AppConfig::new(&ctx.env);
 
-    fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(AuthMiddlewareService {
-            service: Rc::new(service),
-        }))
-    }
-}
+        let auth_header = req.headers().get("Authorization")?;
 
-pub struct AuthMiddlewareService<S> {
-    service: Rc<S>,
-}
-
-impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
-    B: 'static,
-{
-    type Response = ServiceResponse<EitherBody<B, BoxBody>>;
-    type Error = Error;
-    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.service.poll_ready(cx)
-    }
-
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        let svc = self.service.clone();
-        let token = req.cookie("access_token").map(|c| c.value().to_string());
-
-        Box::pin(async move {
-            match token {
-                Some(t) if verify_jwt(&t).is_some() => {
-                    svc.call(req).await.map(|res| res.map_into_left_body())
+        let token = match auth_header {
+            Some(header_value) => {
+                if header_value.starts_with("Bearer ") {
+                    header_value["Bearer ".len()..].to_string()
+                } else {
+                    return Response::error("Unauthorized: Invalid Authorization header format", 401);
                 }
-                _ => {
-                    let (req, _pl) = req.into_parts();
-                    let res = HttpResponse::Unauthorized()
-                        .body("Unauthorized")
-                        .map_into_boxed_body();
-                    Ok(ServiceResponse::new(req, res).map_into_right_body())
-                }
+            },
+            None => {
+                return Response::error("Unauthorized: Missing Authorization header", 401);
             }
-        })
+        };
+
+        match decode_jwt(&token, &app_config.jwt_secret) {
+            Ok(claims) => {
+                // Lưu trữ claims vào request context để các handler sau có thể truy cập
+                req.local_storage_set(AUTH_CONTEXT_KEY, claims)?;
+                handler(req, ctx)
+            },
+            Err(e) => {
+                console_log!("JWT decoding failed: {:?}", e);
+                Response::error(format!("Unauthorized: {}", e), 401)
+            }
+        }
     }
+}
+
+// Hàm trợ giúp để lấy Claims từ Request
+pub fn get_claims_from_request(req: &Request) -> Result<Claims> {
+    req.local_storage_get(AUTH_CONTEXT_KEY)?
+        .ok_or_else(|| Error::RustError("Auth claims not found in request context".to_string()))
 }

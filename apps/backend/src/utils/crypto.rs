@@ -1,56 +1,46 @@
-use ethers::types::Signature;
-use ethers::utils::{hash_message, hex};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use sha2::{Sha256, Digest};
+use hmac::{Hmac, Mac};
+use jwt::Header;
+use crate::models::token::Claims;
+use serde::{Serialize, Deserialize};
+use worker::{Result, Error};
 
-use crate::models::Claims;
+// Alias cho Hmac<Sha256>
+type HmacSha256 = Hmac<Sha256>;
 
-pub fn verify_signature(challenge: &str, signature: &str, address: &str) -> bool {
-    let msg_hash = hash_message(challenge);
-
-    let sig_bytes = match hex::decode(signature.trim_start_matches("0x")) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
-    };
-
-    let signature = match Signature::try_from(sig_bytes.as_slice()) {
-        Ok(sig) => sig,
-        Err(_) => return false,
-    };
-
-    let recovered_addr = match signature.recover(msg_hash) {
-        Ok(addr) => format!("{:?}", addr),
-        Err(_) => return false,
-    };
-
-    recovered_addr.to_lowercase() == address.to_lowercase()
+pub fn hash_password(password: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(password.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
-pub fn create_jwt(address: &str) -> String {
-    let config = crate::config::AppConfig::from_env();  // Load config for secret
-    let claims = Claims {
-        address: address.to_string(),
-        exp: (chrono::Utc::now().timestamp() + 3600) as usize,
-    };
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_ref()),
-    )
-    .unwrap()
+pub fn verify_password(password: &str, hashed_password: &str) -> bool {
+    hash_password(password) == hashed_password
 }
 
-pub fn verify_jwt(token: &str) -> Option<Claims> {
-    let config = crate::config::AppConfig::from_env();
-    match decode::<Claims>(
+pub fn generate_jwt(user_id: String, jwt_secret: &str) -> Result<String> {
+    let claims = Claims::new(user_id, 60); // Token hết hạn sau 60 phút
+    
+    let header = Header::default();
+    let encoding_key = jwt::EncodingKey::from_secret(jwt_secret.as_bytes());
+    
+    jwt::encode(&header, &claims, &encoding_key)
+        .map_err(|e| Error::RustError(format!("Failed to encode JWT: {}", e)))
+}
+
+pub fn decode_jwt(token: &str, jwt_secret: &str) -> Result<Claims> {
+    let decoding_key = jwt::DecodingKey::from_secret(jwt_secret.as_bytes());
+    
+    let token_data = jwt::decode::<Claims>(
         token,
-        &DecodingKey::from_secret(config.jwt_secret.as_ref()),
-        &Validation::default(),
-    ) {
-        Ok(data) => Some(data.claims),
-        Err(_) => None,
-    }
-}
+        &decoding_key,
+        &jwt::Validation::default(),
+    )
+    .map_err(|e| Error::RustError(format!("Failed to decode JWT: {}", e)))?;
 
-pub fn refresh_jwt(token: &str) -> Option<String> {
-    verify_jwt(token).map(|claims| create_jwt(&claims.address))
+    if !token_data.claims.is_valid() {
+        return Err(Error::RustError("JWT token expired".to_string()));
+    }
+    
+    Ok(token_data.claims)
 }

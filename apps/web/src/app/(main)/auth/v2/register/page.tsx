@@ -7,6 +7,7 @@ import { APP_CONFIG } from "@/config/app-config";
 import { RegisterForm } from "../../_components/register-form";
 import { GoogleButton } from "../../_components/social-auth/google-button";
 
+export const runtime = 'edge'; 
 export default function RegisterV2() {
   return (
     <>

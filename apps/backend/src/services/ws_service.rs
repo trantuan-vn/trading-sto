@@ -1,57 +1,19 @@
-use std::time::Duration;
+use worker::{console_log, WebSocket, WebSocketPair, Result, Error};
 
-use actix::{Actor, ActorContext, AsyncContext, StreamHandler};
-use actix_web::rt::time::Instant;
-use actix_web_actors::ws;
+pub async fn handle_ws_connection(ws: WebSocket) -> Result<()> {
+    console_log!("WebSocket connection established.");
 
-pub struct WsSession {
-    pub address: String,
-    pub hb: Instant,
-}
+    ws.accept()?;
 
-impl Actor for WsSession {
-    type Context = ws::WebsocketContext<Self>;
+    // Gửi tin nhắn chào mừng
+    ws.send_with_str("Welcome to the WebSocket service!")?;
 
-    fn started(&mut self, ctx: &mut Self::Context) {
-        self.hb(ctx);
-    }
-}
+    // Có thể thiết lập handler cho các sự kiện tin nhắn đến hoặc đóng kết nối.
+    // Ví dụ: lắng nghe tin nhắn và phản hồi
+    ws.onmessage(|msg| {
+        console_log!("Received WS message: {:?}", msg.as_text());
+        // Xử lý tin nhắn
+    });
 
-impl WsSession {
-    pub fn new(address: String) -> Self {
-        Self {
-            address,
-            hb: Instant::now(),
-        }
-    }
-
-    fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
-        ctx.run_interval(Duration::from_secs(5), |act, ctx| {
-            if Instant::now().duration_since(act.hb) > Duration::from_secs(10) {
-                ctx.stop();
-                return;
-            }
-            ctx.ping(b"ping");
-        });
-    }
-}
-
-impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for WsSession {
-    fn handle(&mut self, msg: Result<ws::Message, ws::ProtocolError>, ctx: &mut Self::Context) {
-        match msg {
-            Ok(ws::Message::Ping(msg)) => {
-                self.hb = Instant::now();
-                ctx.pong(&msg);
-            }
-            Ok(ws::Message::Pong(_)) => {
-                self.hb = Instant::now();
-            }
-            Ok(ws::Message::Text(text)) => {
-                ctx.text(format!("Echo from server to {}: {}", self.address, text));
-            }
-            Ok(ws::Message::Binary(bin)) => ctx.binary(bin),
-            Ok(ws::Message::Close(_)) => ctx.stop(),
-            _ => (),
-        }
-    }
+    Ok(())
 }

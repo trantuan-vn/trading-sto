@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 
+export const runtime = 'edge';
 export default function NotFound() {
   return (
     <div className="flex h-dvh flex-col items-center justify-center space-y-2 text-center">
