@@ -1,13 +1,17 @@
-use actix_web::{get, web, HttpRequest, HttpResponse};
+use actix_web::{get, web, HttpResponse};
+use serde::Deserialize;
 
-use crate::services::auth_service::generate_challenge;
+#[derive(Deserialize)]
+struct QueryParams {
+    address: String,
+}
 
 #[get("/challenge")]
 pub async fn challenge_route(
     state: web::Data<crate::models::AppState>,
-    req: HttpRequest,
+    query: web::Query<QueryParams>,
 ) -> HttpResponse {
-    let address = req.query_string().split('=').nth(1).unwrap_or_default();
-    let challenge = generate_challenge(address, &state);
+    let address = &query.address;
+    let challenge = crate::services::auth_service::generate_challenge(address, &state);
     HttpResponse::Ok().body(challenge)
 }

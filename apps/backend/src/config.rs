@@ -10,7 +10,7 @@ impl AppConfig {
     pub fn from_env() -> Self {
         Self {
             jwt_secret: env::var("JWT_SECRET").unwrap_or_else(|_| "SECRET_KEY".to_string()),  // Fallback for dev
-            bind_address: env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:4000".to_string()),
+            bind_address: env::var("BIND_ADDRESS").unwrap_or_else(|_| "127.0.0.1:3003".to_string()),
         }
     }
 }

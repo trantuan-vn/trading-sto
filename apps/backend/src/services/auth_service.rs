@@ -6,13 +6,10 @@ use serde_json::json;
 use crate::models::{AppState, LoginRequest};
 use crate::utils::crypto::{create_jwt, refresh_jwt, verify_signature};
 
-pub fn generate_challenge(address: &str, state: &AppState) -> String {
-    let challenge = format!("Login challenge: {}", rand::random::<u64>());
-    state
-        .challenges
-        .lock()
-        .unwrap()
-        .insert(address.to_string(), challenge.clone());
+pub fn generate_challenge(address: &str, state: &web::Data<crate::models::AppState>) -> String {
+    let mut challenges = state.challenges.lock().unwrap();
+    let challenge = format!("challenge_for_{}", address);
+    challenges.insert(address.to_string(), challenge.clone());
     challenge
 }
 
@@ -34,6 +31,7 @@ pub fn login_user(body: &LoginRequest, state: &web::Data<AppState>) -> HttpRespo
     let token = create_jwt(&body.address);
 
     let cookie = Cookie::build("access_token", token)
+        .path("/")
         .http_only(true)
         .secure(true)  // Optimized: Enable secure flag for production
         .same_site(actix_web::cookie::SameSite::Strict)  // Optimized: Prevent CSRF
@@ -46,6 +44,7 @@ pub fn login_user(body: &LoginRequest, state: &web::Data<AppState>) -> HttpRespo
 
 pub fn logout_user() -> HttpResponse {
     let cookie = Cookie::build("access_token", "")
+        .path("/")
         .http_only(true)
         .secure(true)
         .same_site(actix_web::cookie::SameSite::Strict)
@@ -61,6 +60,7 @@ pub fn refresh_token(old_token: Option<&str>) -> HttpResponse {
         Some(t) => match refresh_jwt(t) {
             Some(new_token) => {
                 let cookie = Cookie::build("access_token", new_token)
+                    .path("/")
                     .http_only(true)
                     .secure(true)
                     .same_site(actix_web::cookie::SameSite::Strict)

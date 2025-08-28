@@ -3,7 +3,7 @@ use dotenvy::dotenv;
 use env_logger::Env;
 use log::info;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex};
 use actix_web::{web, App, HttpServer};
 
 // --- Module nội bộ ---
@@ -29,14 +29,15 @@ use crate::api::{
 
 pub async fn init_app(config: AppConfig) -> std::io::Result<()> {
     // Create shared app state
-    let state = web::Data::new(Arc::new(AppState {
+    let state = web::Data::new(AppState {
         challenges: Mutex::new(HashMap::new()),
-    }));
-    let bind_address = config.bind_address.clone(); // Clone bind_address trước
+    });
 
+    let bind_address = config.bind_address.clone(); // Clone bind_address trước
+    
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(state.clone()))
+            .app_data(state.clone())
             .app_data(web::Data::new(config.clone()))  // Share config if needed
             .service(challenge_route)
             .service(login_route)
@@ -60,7 +61,7 @@ async fn main() -> std::io::Result<()> {
     dotenv().ok();
 
     // Initialize logging
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+    env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
     info!("Starting backend server...");
 
     // Load configuration
