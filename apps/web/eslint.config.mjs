@@ -11,10 +11,15 @@ import sonarjs from "eslint-plugin-sonarjs";
 
 const compat = new FlatCompat({
   baseDirectory: import.meta.dirname,
+  recommendedConfig: pluginJs.configs.recommended,
 });
 
 /** @type {import('eslint').Linter.Config[]} */
 export default [
+  ...compat.config({
+    extends: ['eslint:recommended', 'next'],
+  }),
+
   { files: ["**/*.{js,mjs,cjs,ts,jsx,tsx}"] },
   { ignores: [".github/", ".husky/", "node_modules/", ".next/", "src/components/ui", "*.config.ts", "*.mjs"] },
   {
