@@ -1,6 +1,6 @@
 globalThis.openNextDebug = false;globalThis.openNextVersion = "3.7.4";
 
-// ../../node_modules/.pnpm/@opennextjs+cloudflare@1.6.5_wrangler@4.33.0/node_modules/@opennextjs/cloudflare/dist/api/durable-objects/sharded-tag-cache.js
+// ../../node_modules/.pnpm/@opennextjs+cloudflare@1.6.5_wrangler@4.33.1/node_modules/@opennextjs/cloudflare/dist/api/durable-objects/sharded-tag-cache.js
 import { DurableObject } from "cloudflare:workers";
 var DOShardedTagCache = class extends DurableObject {
   sql;
