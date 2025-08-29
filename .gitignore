@@ -5,5 +5,3 @@ target
 *.log
 .turbo
 pnpm-lock.yaml
-apps/web/.open-next
-apps/web/wrangler.toml
