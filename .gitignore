@@ -4,6 +4,6 @@ target
 .env*
 *.log
 .turbo
-./pnpm-lock.yaml
+pnpm-lock.yaml
 apps/web/.open-next
 apps/web/wrangler.toml
