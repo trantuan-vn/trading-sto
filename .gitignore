@@ -4,4 +4,3 @@ target
 .env*
 *.log
 .turbo
-pnpm-lock.yaml
