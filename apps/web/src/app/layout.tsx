@@ -30,6 +30,16 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       data-theme-preset={themePreset}
       suppressHydrationWarning
     >
+      <head>
+        {/* Safari iOS cần apple-touch-icon*/}
+        <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180x180.png" />
+        <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png" />
+        <link rel="apple-touch-icon" sizes="120x120" href="/icons/icon-120x120.png" />
+        <link rel="apple-touch-icon" sizes="76x76"   href="/icons/icon-76x76.png" />
+        {/* Android/Chrome progressive web app icons */}
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#000000" />
+      </head>
       <body className={`${inter.className} min-h-screen antialiased`}>
         <PreferencesStoreProvider themeMode={themeMode} themePreset={themePreset}>
           {children}
