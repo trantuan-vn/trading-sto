@@ -7,9 +7,11 @@ import { Toaster } from "@/components/ui/sonner";
 import { APP_CONFIG } from "@/config/app-config";
 import { getPreference } from "@/server/server-actions";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
+import { RainbowProvider } from "@/stores/rainbow/rainbow-provider";
 import { THEME_MODE_VALUES, THEME_PRESET_VALUES, type ThemePreset, type ThemeMode } from "@/types/preferences/theme";
 
 import "./globals.css";
+import '@rainbow-me/rainbowkit/styles.css';
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -38,12 +40,13 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <link rel="apple-touch-icon" sizes="76x76"   href="/icons/icon-76x76.png" />
         {/* Android/Chrome progressive web app icons */}
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#000000" />
       </head>
       <body className={`${inter.className} min-h-screen antialiased`}>
         <PreferencesStoreProvider themeMode={themeMode} themePreset={themePreset}>
-          {children}
-          <Toaster />
+          <RainbowProvider>
+            {children}
+            <Toaster />
+          </RainbowProvider>
         </PreferencesStoreProvider>
       </body>
     </html>

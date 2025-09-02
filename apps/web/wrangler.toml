@@ -5,6 +5,3 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
-[[routes]]
-pattern = "beta.unitoken.trade"
-custom_domain = true
