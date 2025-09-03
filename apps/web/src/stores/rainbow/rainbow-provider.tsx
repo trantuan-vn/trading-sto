@@ -14,26 +14,6 @@ import { config } from '../../config/wagmi-config';
 // Single QueryClient instance to prevent re-instantiation
 const queryClient = new QueryClient();
 
-// Lookup table for accentColorForeground based on themePreset and themeMode
-const foregroundColors: Record<ThemePreset, { light: string; dark: string }> = {
-  default: {
-    light: 'oklch(0.95 0.02 0)', // Near-white for light mode
-    dark: 'oklch(0.1 0.02 0)',  // Near-black for dark mode
-  },
-  brutalist: {
-    light: 'oklch(0.3 0.05 0)',     // Dark gray for light mode
-    dark: 'oklch(0.85 0.05 60)',    // Warm off-white for dark mode
-  },
-  'soft-pop': {
-    light: 'oklch(0.25 0.1 240)',   // Deep navy for light mode
-    dark: 'oklch(0.75 0.15 180)',   // Vibrant cyan for dark mode
-  },
-  tangerine: {
-    light: 'oklch(0.3 0.1 220)',    // Dark blue-gray for light mode
-    dark: 'oklch(0.7 0.15 200)',    // Bright blue for dark mode
-  },
-};
-
 // Maps themeMode and themePreset to RainbowKit themes
 const getRainbowTheme = (themeMode: ThemeMode, themePreset: ThemePreset) => {
   // Find the preset configuration, fallback to default
@@ -42,9 +22,11 @@ const getRainbowTheme = (themeMode: ThemeMode, themePreset: ThemePreset) => {
   // Select primary color and base theme
   const primaryColor = themeMode === 'dark' ? preset.primary.dark : preset.primary.light;
   const baseTheme = themeMode === 'dark' ? darkTheme() : lightTheme();
-
-  // Get foreground color from lookup table
-  const accentColorForeground = foregroundColors[themePreset]?.[themeMode] ?? foregroundColors.default[themeMode];
+  // tự chọn foreground dựa vào themeMode
+  // const accentColorForeground = themeMode === "dark" ? "black" : "white";
+  const accentColorForeground =
+    getComputedStyle(document.documentElement).getPropertyValue('--accent-color-foreground').trim()
+    || (themeMode === 'dark' ? 'black' : 'white');
 
   return {
     ...baseTheme,
@@ -66,7 +48,7 @@ export function RainbowProvider({ children }: { children: ReactNode }) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider theme={theme}>{children}</RainbowKitProvider>
+        <RainbowKitProvider theme={theme} modalSize="compact">{children}</RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );

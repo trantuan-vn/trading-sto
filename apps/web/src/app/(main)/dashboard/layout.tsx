@@ -63,7 +63,7 @@ export default async function Layout({ children }: LayoutProps<"/dashboard">) {
               <LayoutControls {...layoutPreferences} />
               <ThemeSwitcher />
               {/* <AccountSwitcher users={users} /> */}
-              <ConnectButton />
+              <ConnectButton chainStatus="none" showBalance={false} accountStatus="avatar" label="Sign in" />
             </div>
           </div>
         </header>
