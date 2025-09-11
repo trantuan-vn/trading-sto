@@ -10,7 +10,7 @@ import { WagmiProvider } from "wagmi";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { ThemeMode, ThemePreset, THEME_PRESET_OPTIONS } from "@/types/preferences/theme";
 
-import { config } from "../../config/wagmi-config";
+import { config } from "../../config/wagmi/rainbow-config";
 
 // Single QueryClient instance to prevent re-instantiation
 const queryClient = new QueryClient();

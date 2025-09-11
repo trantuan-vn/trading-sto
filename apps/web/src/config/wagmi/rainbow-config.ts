@@ -8,7 +8,7 @@ import {
   sepolia,
 } from 'wagmi/chains';
 
-const projectId = process.env.NEXT_PUBLIC_PROJECT_ID ?? "c17c648e814a42c99a410355f29b0ad5"
+const projectId = process.env.NEXT_PUBLIC_PROJECT_ID ?? "c17c648e814a42c99a410355f29b0ad5";
 
 export const config = getDefaultConfig({
   appName: 'RainbowKit demo',

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { headers } from "next/headers";
 
 import { NextIntlClientProvider } from "next-intl";
 
@@ -7,7 +8,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { APP_CONFIG } from "@/config/app-config";
 import { getPreference } from "@/server/server-actions";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
-import { RainbowProvider } from "@/stores/rainbow/rainbow-provider";
+import { RainbowProvider } from "@/stores/wagmi/rainbow-provider";
+import { ReownProvider } from "@/stores/wagmi/reown-provider";
 import { LOCALE_VALUES, type Locale } from "@/types/preferences/locale";
 import { THEME_MODE_VALUES, THEME_PRESET_VALUES, type ThemePreset, type ThemeMode } from "@/types/preferences/theme";
 
@@ -24,6 +26,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   const themeMode = await getPreference<ThemeMode>("theme_mode", THEME_MODE_VALUES, "light");
   const themePreset = await getPreference<ThemePreset>("theme_preset", THEME_PRESET_VALUES, "default");
   const locale = await getPreference<Locale>("locale", LOCALE_VALUES, "en-US");
+
+  const headersData = await headers();
+  const cookies = headersData.get("cookie");
+
   return (
     <html
       lang={locale}
@@ -44,8 +50,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <PreferencesStoreProvider themeMode={themeMode} themePreset={themePreset} locale={locale}>
           <NextIntlClientProvider>
             <RainbowProvider>
-              {children}
-              <Toaster />
+              <ReownProvider cookies={cookies}>
+                {children}
+                <Toaster />
+              </ReownProvider>
             </RainbowProvider>
           </NextIntlClientProvider>
         </PreferencesStoreProvider>

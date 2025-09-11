@@ -68,6 +68,7 @@ export default async function Layout({ children }: LayoutProps<"/dashboard">) {
               <ThemeSwitcher />
               <AccountSwitcher users={users} />
               <ConnectButton chainStatus="none" showBalance={false} accountStatus="avatar" label={tConnectButton('label')} />
+              <appkit-button />
             </div>
           </div>
         </header>
