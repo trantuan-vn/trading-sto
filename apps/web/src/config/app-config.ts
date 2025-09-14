@@ -8,7 +8,6 @@ export const APP_CONFIG = {
   copyright: `© ${currentYear}, Unitoken Admin.`,
   meta: {
     title: "Unitoken",
-    description:
-      "Crypto, NFT, and Token Exchange",
+    description: "Crypto, NFT, and Token Exchange",
   },
 };
