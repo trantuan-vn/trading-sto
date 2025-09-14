@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "ErrorMessageOuter";
+option java_multiple_files = true;
+
+message ErrorMessage {
+  int32 code = 1;
+  string reason = 2;
+}

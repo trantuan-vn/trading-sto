@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway.business;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway.business";
+option java_outer_classname = "WalletProto";
+
+message WalletKeyMetadata {
+  string wallet_id = 1;
+  string account_id = 2;           // e.g., "eip155:1:0xabc..."
+  string key_alias = 3;            // KMS key alias or Vault path
+  string encryption_method = 4;    // e.g., "vault+aws-kms"
+  bool is_hardware_backed = 5;     // If using HSM
+  string creation_time = 6;
+  string key_fingerprint = 7;      // For integrity check
+  string status = 8;               // ACTIVE, REVOKED, EXPIRED
+}
+
+message Wallet {
+  string wallet_id = 1;
+  repeated Account accounts = 2;
+}
+
+message Account {
+  string account_id = 1; // CAIP-10: e.g., "eip155:1:0xabc..."
+  string chain_id = 2;   // CAIP-2: e.g., "eip155:1"
+  string address = 3;    // e.g., "0xabc123..."
+  uint32 slip44_coin_type = 4; // SLIP-44
+  string public_key = 5;
+
+  repeated AssetBalance assets = 6;
+  repeated NFTBalance nft_balances = 7;
+  repeated VestingContract vesting_contracts = 8;
+  repeated StakingContract staking_contracts = 9;
+}
+
+message AssetBalance {
+  string asset_id = 1;  // CAIP-19: e.g., "eip155:1/erc20:0xdac17f..."
+  string contract_address = 2; // Token contract
+  string symbol = 3;           // e.g., "USDT"
+  uint32 decimals = 4;
+  string name = 5;
+  string logo_uri = 6;         // TokenList
+  string token_type = 7;       // e.g., "ERC20", "BEP20"
+
+  string balance = 8;          // string to avoid overflow
+  string frozen_onchain = 9;   // Locked by smart contracts
+  string frozen_offchain = 10; // Locked by custodian
+  string available = 11;       // = balance - frozen_onchain - frozen_offchain
+
+  string price_usd = 12;
+  string value_usd = 13;       // balance * price
+}
+
+message NFTBalance {
+  string standard = 1;        // "ERC721" or "ERC1155"
+  string contract_address = 2;
+  string token_id = 3;
+  string metadata_uri = 4;
+  uint64 amount = 5;          // >1 for ERC1155
+  string name = 6;
+  string image_uri = 7;
+}
+
+message VestingContract {
+  string contract_address = 1;
+  string asset_id = 2;
+  string amount_locked = 3;
+  string unlock_time = 4;
+  string status = 5; // e.g., "LOCKED", "VESTING", "UNLOCKED"
+}
+
+message StakingContract {
+  string contract_address = 1;
+  string validator = 2;
+  string asset_id = 3;
+  string amount_staked = 4;
+  string reward_pending = 5;
+  string reward_asset_id = 6;
+}

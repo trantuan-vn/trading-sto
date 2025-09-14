@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "ResumeMessageOuter";
+option java_multiple_files = true;
+
+message ResumeMessage {
+  string domain = 1;
+  string pod = 2;
+  string topic = 3;
+  uint64 lastAckSeqId = 4;
+  string timestamp = 5; //client 
+}
+

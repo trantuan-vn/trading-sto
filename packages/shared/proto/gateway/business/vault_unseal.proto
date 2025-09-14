@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway.business;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway.business";
+option java_outer_classname = "VaultUnsealProto";
+
+// Thông tin Vault server
+message VaultInstance {
+  string instance_id = 1;
+  string address = 2;        // e.g., "https://vault.internal:8200"
+  string cluster_name = 3;
+  VaultStatus status = 4;
+  bool auto_unseal_enabled = 5;
+  KmsProvider kms_provider = 6; // Chỉ định nếu auto_unseal_enabled = true
+}
+
+// Trạng thái của Vault
+enum VaultStatus {
+  UNKNOWN = 0;
+  SEALED = 1;
+  UNSEALED = 2;
+  RECOVERY = 3;
+}
+
+// Thông tin Master Key (bản mã)
+message MasterKeyInfo {
+  bytes encrypted_master_key = 1;
+  string encryption_algorithm = 2; // e.g., "AES-GCM"
+  string kms_key_id = 3;           // nếu dùng auto-unseal
+}
+
+// Dành cho auto-unseal (ví dụ: AWS KMS, GCP KMS)
+message KmsProvider {
+  oneof provider {
+    AwsKms aws = 1;
+    GcpKms gcp = 2;
+    AzureKeyVault azure = 3;
+    CustomKms custom = 4;
+  }
+}
+
+message AwsKms {
+  string key_id = 1;            // ARN
+  string region = 2;
+  string access_key = 3;
+  string kms_alias = 4;
+}
+
+message GcpKms {
+  string key_name = 1;
+  string project_id = 2;
+  string location = 3;
+  string credentials_json = 4;
+}
+
+message AzureKeyVault {
+  string key_uri = 1;
+  string tenant_id = 2;
+  string client_id = 3;
+}
+
+message CustomKms {
+  string endpoint = 1;
+  string api_key = 2;
+}
+
+// Cấu trúc của unseal key chia nhỏ bằng Shamir's Secret Sharing
+message UnsealKeyShard {
+  int32 shard_index = 1;
+  string key_fragment = 2;
+  string created_at = 3;
+  string owner = 4;
+}
+
+// Yêu cầu để unseal thủ công
+message ManualUnsealRequest {
+  string vault_instance_id = 1;
+  repeated UnsealKeyShard key_shards = 2;
+}
+
+// Phản hồi sau khi unseal
+message UnsealResponse {
+  string vault_instance_id = 1;
+  VaultStatus status = 2;
+  string unsealed_by = 3;
+  string unsealed_at = 4;
+  string node_id = 5;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "HandshakeMessageOuter";
+option java_multiple_files = true;
+
+message HandshakeMessage {
+  uint64 timestamp = 1;          // Server-generated timestamp (epoch ms)
+}

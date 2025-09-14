@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+import "gateway/business/common/event_type.proto";
+import "gateway/business/deposit.proto";
+import "gateway/business/withdrawal.proto";
+import "gateway/business/transfer.proto";
+import "gateway/business/balance.proto";
+import "gateway/business/notification.proto";
+import "gateway/business/maintenance.proto"; 
+
+option java_multiple_files = true;
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "BusinessProto";
+
+message BusinessMessage {
+  uint64 seqId = 1; 
+  com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.common.EventType eventType = 2;
+
+  oneof payload {
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.DepositRequested depositRequested = 3;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.DepositConfirmed depositConfirmed = 4;
+
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.WithdrawalRequested withdrawalRequested = 5;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.WithdrawalConfirmed withdrawalConfirmed = 6;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.WithdrawalRejected withdrawalRejected = 7;
+
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.TransferInitiated transferInitiated = 8;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.TransferReceived transferReceived = 9;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.TransferFailed transferFailed = 10;
+
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.BalanceUpdated balanceUpdated = 11;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.WalletLocked walletLocked = 12;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.WalletUnlocked walletUnlocked = 13;
+
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.NotificationPromo promoNotification = 14;
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.NotificationSystem systemNotification = 15;
+
+    com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.MaintenanceScheduled maintenanceScheduled = 16;
+  }
+}
+
+message BusinessMessageList {
+  repeated BusinessMessage items = 1;
+}  
+

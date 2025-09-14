@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway.business;
+
+option java_multiple_files = true;
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway.business";
+option java_outer_classname = "TransferProto";
+
+message TransferInitiated {
+  string fromUserId = 1;
+  string toUserId = 2;
+  double amount = 3;
+}
+
+message TransferReceived {
+  string fromUserId = 1;
+  string toUserId = 2;
+  double amount = 3;
+}
+
+message TransferFailed {
+  string fromUserId = 1;
+  string toUserId = 2;
+  string reason = 3;
+}

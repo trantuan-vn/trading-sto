@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package transak;
+
+// Định nghĩa OrderMessage
+message OrderMessage {
+  string defaultCryptoCurrency = 1; // Loại crypto muốn mua (ví dụ: USDT)
+  string walletAddress = 2;         // Địa chỉ ví đích của user
+  string fiatCurrency = 3;          // Loại tiền fiat (ví dụ: USD)
+}

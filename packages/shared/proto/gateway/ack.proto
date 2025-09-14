@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "AckMessageOuter";
+option java_multiple_files = true;
+
+message AckSeqIdRange {
+  uint64 startSeqId = 1;
+  uint64 endSeqId = 2;
+}
+
+message AckMessageList {
+  repeated AckSeqIdRange receivedRanges = 1;
+  repeated FailedMessage failedMessages = 2;
+  optional uint64 nextFromSeqId = 3;
+  
+  message FailedMessage {
+    uint64 seqId = 1;
+    string errorCode = 2;
+    string errorMessage = 3;
+  }
+}

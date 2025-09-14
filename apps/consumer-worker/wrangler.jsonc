@@ -57,5 +57,13 @@
 				"delivery_delay": 0
 			}
 		]
+	},
+	"durable_objects": {
+		"bindings": [
+			{
+				"class_name": "SessionDurableObject",
+				"name": "SESSION_DO"
+			}
+		]
 	}
 }

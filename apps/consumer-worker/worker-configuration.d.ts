@@ -3,7 +3,8 @@
 // Runtime types generated with workerd@1.20250906.0 2025-09-11
 declare namespace Cloudflare {
 	interface Env {
-		input_part_0: Queue<RequestMessage>;
+		SESSION_DO: DurableObjectNamespace<import("./src/server/session-do").SessionDurableObject>;
+		INPUT_PART_0: Queue;
 	}
 }
 interface Env extends Cloudflare.Env {}

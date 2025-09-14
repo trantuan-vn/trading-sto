@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.common;
+
+option java_multiple_files = true;
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway.business.common";
+option java_outer_classname = "EventTypeProto";
+
+
+enum EventType {
+  UNKNOWN = 0;
+
+  DEPOSIT_REQUESTED = 1;
+  DEPOSIT_CONFIRMED = 2;
+
+  WITHDRAWAL_REQUESTED = 3;
+  WITHDRAWAL_CONFIRMED = 4;
+  WITHDRAWAL_REJECTED = 5;
+
+  TRANSFER_INITIATED = 6;
+  TRANSFER_RECEIVED = 7;
+  TRANSFER_FAILED = 8;
+
+  BALANCE_UPDATED = 9;
+  WALLET_LOCKED = 10;
+  WALLET_UNLOCKED = 11;
+
+  NOTIFY_PROMO = 12;
+  NOTIFY_SYSTEM = 13;
+
+  MAINTENANCE_SCHEDULED = 14;
+}

@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway.business;
+
+option java_multiple_files = true;
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway.business";
+option java_outer_classname = "DepositProto";
+
+message DepositRequested {
+  string userId = 1;
+  string method = 2;
+  double amount = 3;
+}
+
+message DepositConfirmed {
+  string userId = 1;
+  string transactionId = 2;
+  double amount = 3;
+  string confirmedAt = 4;
+}

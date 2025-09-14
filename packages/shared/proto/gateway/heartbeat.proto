@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package com.smartconsultor.microservice.gateway.adapter.dto.gateway;
+
+option java_package = "com.smartconsultor.microservice.gateway.adapter.dto.gateway";
+option java_outer_classname = "HeartbeatMessageOuter";
+option java_multiple_files = true;
+
+message HeartbeatMessage {
+  string status = 1; // "ping", "pong"
+  string timestamp = 2; // client, server
+}
