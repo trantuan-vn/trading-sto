@@ -30,7 +30,6 @@
     },
     "types": [
       "@cloudflare/workers-types",
-      "./worker-configuration.d.ts"
     ], 
   },
   "include": [

@@ -84,7 +84,7 @@ export class SessionDurableObject extends DurableObject {
       const sessionId = this.ctx.id.toString();
 
       // Enqueue message vào input-part-0
-      await (this.env as Env).INPUT_PART_0.send({
+      await (this.env as Env).input_part_0.send({
         sessionId,
         clientId: session.id,
         message: data,

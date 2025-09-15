@@ -4,7 +4,8 @@
 declare namespace Cloudflare {
 	interface Env {
 		SESSION_DO: DurableObjectNamespace<import("./src/server/session-do").SessionDurableObject>;
-        INPUT_PART_0: Queue;
+        input_part_0: Queue;
+		unitoken_db: D1Database;
 	}
 }
 interface Env extends Cloudflare.Env {}
