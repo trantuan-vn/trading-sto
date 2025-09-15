@@ -62,9 +62,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         ).toString();
 
         await env.unitoken_db
-            .prepare('UPDATE users SET ethereum_address = ?, ethereum_private_key = ?, mnemonic_phrase = ? WHERE id = ?')
-            .bind(address, encryptedPrivateKey, encryptedMnemonic, user.id)
-            .run();
+          .prepare("UPDATE users SET ethereum_address = ?, ethereum_private_key = ?, mnemonic_phrase = ? WHERE id = ?")
+          .bind(address, encryptedPrivateKey, encryptedMnemonic, user.id)
+          .run();
         user.ethereum_address = address;
       }
       return true;

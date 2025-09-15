@@ -1,41 +1,56 @@
-import { NextRequest, NextResponse } from "next/server";
 
-import { verifyAuthToken, AuthResult } from "./middleware/auth-middleware";
+// import { NextRequest, NextResponse } from "next/server";
 
-// Define protected routes
-const protectedRoutes = ["/api/ws", "/api/session"];
+// import { verifyAuthToken, AuthResult } from "./middleware/auth-middleware";
 
-export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+// // Define protected routes
+// const protectedRoutes = ["/api/ws", "/api/session"];
 
-  // Skip middleware for non-protected routes
-  if (!protectedRoutes.some((route) => pathname.startsWith(route))) {
-    return NextResponse.next();
-  }
+// export async function middleware(request: NextRequest) {
+//   const { pathname } = request.nextUrl;
 
-  // Verify authentication
-  const authResult: AuthResult = await verifyAuthToken(request);
+//   // Skip middleware for non-protected routes
+//   if (!protectedRoutes.some((route) => pathname.startsWith(route))) {
+//     return NextResponse.next();
+//   }
 
-  if (!authResult.success || !authResult.payload) {
-    return NextResponse.json(
-      { success: false, error: authResult.error },
-      { status: authResult.status }
-    );
-  }
+//   // Verify authentication
+//   const authResult: AuthResult = await verifyAuthToken(request);
 
-  // Add authenticated data to request headers
-  const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-auth-address", authResult.payload.address);
-  requestHeaders.set("x-auth-chainId", authResult.payload.chainId.toString());
-  requestHeaders.set("x-auth-sessionId", authResult.payload.sessionId);
+//   if (!authResult.success || !authResult.payload) {
+//     return NextResponse.json(
+//       { success: false, error: authResult.error },
+//       { status: authResult.status }
+//     );
+//   }
 
-  return NextResponse.next({
-    request: {
-      headers: requestHeaders,
+//   // Add authenticated data to request headers
+//   const requestHeaders = new Headers(request.headers);
+//   requestHeaders.set("x-auth-address", authResult.payload.address);
+//   requestHeaders.set("x-auth-chainId", authResult.payload.chainId.toString());
+//   requestHeaders.set("x-auth-sessionId", authResult.payload.sessionId);
+
+//   return NextResponse.next({
+//     request: {
+//       headers: requestHeaders,
+//     },
+//   });
+// }
+
+// export const config = {
+//   matcher: ["/api/ws/:path*", "/api/session/:path*"],
+// };
+
+import { withAuth } from 'next-auth/middleware';
+
+export default withAuth({
+  callbacks: {
+    authorized: ({ req, token }) => {
+      return !!token;
     },
-  });
-}
+  },
+});
 
 export const config = {
-  matcher: ["/api/ws/:path*", "/api/session/:path*"],
+  matcher: ['/api/ws/:path*']
 };
