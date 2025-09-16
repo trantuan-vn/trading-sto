@@ -21,6 +21,7 @@ import { AccountSwitcher } from "./_components/sidebar/account-switcher";
 import { LayoutControls } from "./_components/sidebar/layout-controls";
 import { SearchDialog } from "./_components/sidebar/search-dialog";
 import { ThemeSwitcher } from "./_components/sidebar/theme-switcher";
+import AuthAccount from "@/components/auth-account";
 
 // export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
 export default async function Layout({ children }: LayoutProps<"/dashboard">) {
@@ -62,6 +63,7 @@ export default async function Layout({ children }: LayoutProps<"/dashboard">) {
               <LayoutControls {...layoutPreferences} />
               <ThemeSwitcher />
               <AccountSwitcher users={users} />
+              <AuthAccount />
             </div>
           </div>
         </header>
