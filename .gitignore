@@ -4,3 +4,4 @@ target
 .env*
 *.log
 .turbo
+apps/auth-worker/worker-configuration.d.ts
