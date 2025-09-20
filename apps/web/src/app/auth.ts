@@ -1,15 +1,10 @@
-import { D1Adapter } from '@auth/d1-adapter';
-import { getCloudflareContext } from "@opennextjs/cloudflare";
 import CryptoJS from 'crypto-js';
 import NextAuth from "next-auth";
 import AppleProvider from "next-auth/providers/apple";
 import GoogleProvider from "next-auth/providers/google";
 import { mnemonicToAccount, generateMnemonic, english } from 'viem/accounts';
 
-const env=(await getCloudflareContext() as any).env;
-
 export const { handlers, auth, signIn, signOut } = NextAuth({
-  adapter: D1Adapter(env.unitoken_db),
   providers: [
     GoogleProvider({
       clientId: process.env.GOOGLE_CLIENT_ID ?? '',
@@ -40,7 +35,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   secret: process.env.AUTH_SECRET,
   session: {
-    strategy: 'database',
+    strategy: 'jwt',
   },
   callbacks: {
     async signIn({ user, account }) {

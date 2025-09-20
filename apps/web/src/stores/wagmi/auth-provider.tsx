@@ -16,6 +16,6 @@ export function AuthProvider({ children, initialState }: { children: ReactNode; 
       <QueryClientProvider client={queryClient}>
         <SessionProvider>{children}</SessionProvider>
       </QueryClientProvider>
-    </WagmiProvider>
+    </WagmiProvider>  
   );
 }
