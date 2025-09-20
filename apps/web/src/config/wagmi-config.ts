@@ -1,21 +1,12 @@
-import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { walletConnect, injected } from '@wagmi/connectors';
-import { createConfig, http, createStorage } from 'wagmi';
+import { createConfig, http, cookieStorage, createStorage } from 'wagmi';
 import { mainnet, sepolia } from 'wagmi/chains';
-
-import { D1Storage } from '../stores/wagmi/d1-storage';
-
-const env=(await getCloudflareContext() as any).env;
-
-const d1Storage = new D1Storage({
-  database: env.unitoken_db,
-});
 
 export const config = createConfig({
   chains: [mainnet, sepolia],
   ssr: true,
   storage: createStorage({
-    storage: d1Storage,
+    storage: cookieStorage,
   }),
   connectors: [
     walletConnect({

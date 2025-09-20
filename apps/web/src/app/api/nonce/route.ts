@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { generateNonce } from "siwe";
 
-export async function GET(env: Env) {
-try {
+export async function GET(req: NextRequest) {
+  try {
     const nonce = generateNonce();
     const response = NextResponse.json({ nonce });
     response.cookies.set("nonce", nonce, {
