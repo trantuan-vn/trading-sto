@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { users } from "@/data/users";
+import { getUserFromAPI } from "@/data/users";
 import { cn } from "@/lib/utils";
 import { getPreference } from "@/server/server-actions";
 import {
@@ -21,11 +21,11 @@ import { AccountSwitcher } from "./_components/sidebar/account-switcher";
 import { LayoutControls } from "./_components/sidebar/layout-controls";
 import { SearchDialog } from "./_components/sidebar/search-dialog";
 import { ThemeSwitcher } from "./_components/sidebar/theme-switcher";
-import AuthAccount from "@/components/auth-account";
 
 // export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
 export default async function Layout({ children }: LayoutProps<"/dashboard">) {
   const cookieStore = await cookies();
+  const user = await getUserFromAPI(cookieStore.toString());
   const defaultOpen = cookieStore.get("sidebar_state")?.value === "true";
 
   const [sidebarVariant, sidebarCollapsible, contentLayout] = await Promise.all([
@@ -42,7 +42,7 @@ export default async function Layout({ children }: LayoutProps<"/dashboard">) {
 
   return (
     <SidebarProvider defaultOpen={defaultOpen}>
-      <AppSidebar variant={sidebarVariant} collapsible={sidebarCollapsible} />
+      <AppSidebar user={user} variant={sidebarVariant} collapsible={sidebarCollapsible} />
       <SidebarInset
         data-content-layout={contentLayout}
         className={cn(
@@ -62,8 +62,7 @@ export default async function Layout({ children }: LayoutProps<"/dashboard">) {
             <div className="flex items-center gap-2">
               <LayoutControls {...layoutPreferences} />
               <ThemeSwitcher />
-              <AccountSwitcher users={users} />
-              <AuthAccount />
+              <AccountSwitcher user={user} />
             </div>
           </div>
         </header>

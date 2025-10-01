@@ -25,6 +25,11 @@ export const SetDataRequestSchema = z.object({
   value: z.unknown(),
 });
 
+export const GetDataRequestSchema = z.object({
+  key: z.string(),
+});
+
+
 // Response schemas
 export const AuthResponseSchema = z.object({
   success: z.literal(true),
@@ -102,7 +107,7 @@ export const FacebookUserInfoSchema = z.object({
 
 export const GitHubUserInfoSchema = z.object({
   id: z.number(),
-  email: z.string().email().optional(),
+  email: z.string().email().nullable().optional(),
   login: z.string(),
   name: z.string().optional(),
   avatar_url: z.string().optional(),
@@ -130,6 +135,7 @@ export type OTPVerification = z.infer<typeof OTPVerificationSchema>;
 export type SIWENonce = z.infer<typeof SIWENonceSchema>;
 export type SIWEAuth = z.infer<typeof SIWEAuthSchema>;
 export type SetDataRequest = z.infer<typeof SetDataRequestSchema>;
+export type GetDataRequest = z.infer<typeof GetDataRequestSchema>;
 
 export type AuthResponse = z.infer<typeof AuthResponseSchema>;
 export type OTPResponse = z.infer<typeof OTPResponseSchema>;
@@ -167,6 +173,7 @@ export interface UserDOEndpoints {
     response: EventsResponse | ErrorResponse;
   };
   'GET /data': {
+    body: GetDataRequest;
     response: DataResponse | ErrorResponse;
   };
   'POST /data': {
@@ -185,6 +192,15 @@ export interface UserDOEndpoints {
   };
 }
 
+export interface OAuthConfig {
+  clientId: string;
+  clientSecret: string;
+  tokenEndpoint: string;
+  userInfoEndpoint: string;
+  redirectUri: string;
+}
+
+export type OAuthProvider = "google" | "apple" | "facebook" | "github" | "twitter";
 // Helper type for extracting endpoint types
 export type EndpointRequest<T extends keyof UserDOEndpoints> =
   UserDOEndpoints[T] extends { body: infer B } ? B : never;

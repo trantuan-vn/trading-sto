@@ -123,7 +123,7 @@ export function getUserDO<T extends UserDO>(
 }
 
 const getDO = (env: Env, identifier: string): UserDO => {
-  return env.USERDO.get(env.USERDO.idFromName(normalizeIdentifier(identifier))) as unknown as UserDO;
+  return env.GATEWAY_DO.get(env.GATEWAY_DO.idFromName(normalizeIdentifier(identifier))) as unknown as UserDO;
 };
 
 export async function migrateUserIdentifier(
@@ -200,6 +200,113 @@ export class UserDO extends DurableObject {
     return { token, refreshToken };
   }
 
+  // Email sending implementation 
+  private async sendEmailOTP(email: string, otp: string) {
+    try {
+      const emailData = {
+        personalizations: [
+          {
+            to: [{ email }],
+            subject: "Your OTP Code",
+          },
+        ],
+        from: {
+          email: "noreply@unitoken.trade", // phải là domain đã verify trong SendGrid
+          name: "Unitoken Auth",           // tên hiển thị
+        },
+        content: [
+          {
+            type: "text/html",
+            value: `
+              <h2>Your OTP Code</h2>
+              <p>Your one-time password is: <strong>${otp}</strong></p>
+              <p>This code will expire in 10 minutes.</p>
+              <p>If you didn't request this, please ignore this email.</p>
+            `,
+          },
+        ],
+      };
+
+      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.env.EMAIL_API_KEY}`, // thay bằng key SendGrid thật
+        },
+        body: JSON.stringify(emailData),
+      });
+
+      if (!response.ok) {
+        console.error("Failed to send email OTP:", await response.text());
+      } else {
+        console.log("OTP email sent to", email);
+      }
+    } catch (error) {
+      console.error("Error sending email OTP:", error);
+    }
+  }
+
+  // SMS sending implementation
+  private async sendSMSOTP(phone: string, otp: string, provider: string) {
+    try {
+      let response: Response | null = null;
+
+      switch (provider.toUpperCase()) {
+        case "TWILIO": {
+          const smsData = new URLSearchParams({
+            To: phone,
+            From: this.env.SMS_FROM_NUMBER,
+            Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+          });
+
+          const accountSid = this.env.TWILIO_ACCOUNT_SID;
+          const authToken = this.env.TWILIO_AUTH_TOKEN;
+
+          response = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": "Basic " + btoa(`${accountSid}:${authToken}`),
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: smsData.toString(),
+            }
+          );
+          break;
+        }
+        case "VONAGE": {
+          // Vonage (Nexmo) SMS API dùng form-urlencoded và basic auth
+          const smsData = new URLSearchParams({
+            from: this.env.SMS_FROM_NUMBER, // hoặc Sender ID
+            to: phone,
+            text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+          });
+
+          response = await fetch("https://rest.nexmo.com/sms/json", {
+            method: "POST",
+            headers: {
+              "Authorization": "Basic " + btoa(`${this.env.VONAGE_API_KEY}:${this.env.VONAGE_API_SECRET}`),
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: smsData.toString(),
+          });        
+          break;
+        }
+
+        default:
+          throw new Error(`Unsupported provider: ${provider}`);
+      }
+
+      if (response && !response.ok) {
+        console.error(`Failed to send SMS OTP via ${provider}:`, await response.text());
+      }
+    } catch (error) {
+      console.error(`Error sending SMS OTP via ${provider}:`, error);
+    }
+  }
+
+  // email/phone auth
   async requestOTP({ identifier }: { identifier: string }) {
     identifier = normalizeIdentifier(identifier);
     await this.checkRateLimit();
@@ -255,114 +362,6 @@ export class UserDO extends DurableObject {
     return { ok: true, message: 'OTP sent successfully' };
   }
 
-  // Email sending implementation 
-  private async sendEmailOTP(email: string, otp: string) {
-    try {
-      const emailData = {
-        personalizations: [
-          {
-            to: [{ email }],
-            subject: "Your OTP Code",
-          },
-        ],
-        from: {
-          email: "noreply@unitoken.trade", // phải là domain đã verify trong SendGrid
-          name: "Unitoken Auth",           // tên hiển thị
-        },
-        content: [
-          {
-            type: "text/html",
-            value: `
-              <h2>Your OTP Code</h2>
-              <p>Your one-time password is: <strong>${otp}</strong></p>
-              <p>This code will expire in 10 minutes.</p>
-              <p>If you didn't request this, please ignore this email.</p>
-            `,
-          },
-        ],
-      };
-
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.env.EMAIL_API_KEY}`, // thay bằng key SendGrid thật
-        },
-        body: JSON.stringify(emailData),
-      });
-
-      if (!response.ok) {
-        console.error("Failed to send email OTP:", await response.text());
-      } else {
-        console.log("OTP email sent to", email);
-      }
-    } catch (error) {
-      console.error("Error sending email OTP:", error);
-    }
-  }
-
-
-  // SMS sending implementation
-private async sendSMSOTP(phone: string, otp: string, provider: string) {
-  try {
-    let response: Response | null = null;
-
-    switch (provider.toUpperCase()) {
-      case "TWILIO": {
-        const smsData = new URLSearchParams({
-          To: phone,
-          From: this.env.SMS_FROM_NUMBER,
-          Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-        });
-
-        const accountSid = this.env.TWILIO_ACCOUNT_SID;
-        const authToken = this.env.TWILIO_AUTH_TOKEN;
-
-        response = await fetch(
-          `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": "Basic " + btoa(`${accountSid}:${authToken}`),
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: smsData.toString(),
-          }
-        );
-        break;
-      }
-      case "VONAGE": {
-        // Vonage (Nexmo) SMS API dùng form-urlencoded và basic auth
-        const smsData = new URLSearchParams({
-          from: this.env.SMS_FROM_NUMBER, // hoặc Sender ID
-          to: phone,
-          text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-        });
-
-        response = await fetch("https://rest.nexmo.com/sms/json", {
-          method: "POST",
-          headers: {
-            "Authorization": "Basic " + btoa(`${this.env.VONAGE_API_KEY}:${this.env.VONAGE_API_SECRET}`),
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: smsData.toString(),
-        });        
-        break;
-      }
-
-      default:
-        throw new Error(`Unsupported provider: ${provider}`);
-    }
-
-    if (response && !response.ok) {
-      console.error(`Failed to send SMS OTP via ${provider}:`, await response.text());
-    }
-  } catch (error) {
-    console.error(`Error sending SMS OTP via ${provider}:`, error);
-  }
-}
-
-
   async verifyOTP({ identifier, otp }: { identifier: string; otp: string }) {
     identifier = normalizeIdentifier(identifier);
     await this.checkRateLimit();
@@ -410,6 +409,7 @@ private async sendSMSOTP(phone: string, otp: string, provider: string) {
     return { user, token, refreshToken };
   }
 
+  // wallet auth
   async connectWallet({ address, signature }: { address: string; signature: string }) {
     await this.checkRateLimit();
 
@@ -443,6 +443,63 @@ private async sendSMSOTP(phone: string, otp: string, provider: string) {
     return { user, token, refreshToken };
   }
 
+  // oauth auth
+  async connectOAuth(provider: string, identifier: string, tokenData: any, userInfo: any): Promise<{ user: User; token: string; refreshToken: string }> {
+    await this.checkRateLimit();
+
+    let user: User;
+    
+    try {
+      // Try to get existing user
+      user = await this.raw();
+      
+      // Update OAuth data for existing user
+      user.oauthData = user.oauthData || {};
+      user.oauthData[provider] = {
+        id: userInfo.sub || userInfo.id || userInfo.data?.id,
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        expiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined,
+        profile: userInfo
+      };
+      
+    } catch (error) {
+      // User doesn't exist, create new one
+      const wallet = await generateWallet(this.env.ENCRYPTION_SECRET);
+      user = {
+        id: this.getCurrentUserId(),
+        identifier,
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        mnemonicPhrase: wallet.mnemonicPhrase,
+        createdAt: new Date().toISOString(),
+        refreshTokens: [],
+        oauthData: {
+          [provider]: {
+            id: userInfo.sub || userInfo.id || userInfo.data?.id,
+            accessToken: tokenData.access_token,
+            refreshToken: tokenData.refresh_token,
+            expiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : undefined,
+            profile: userInfo
+          }
+        }
+      };
+    }
+
+    // Save user data
+    await this.storage.put(AUTH_DATA_KEY, user);
+
+    // Generate tokens
+    const { token, refreshToken } = await this.generateTokens(user);
+
+    // Store refresh token
+    if (!user.refreshTokens) user.refreshTokens = [];
+    user.refreshTokens.push(refreshToken);
+    await this.storage.put(AUTH_DATA_KEY, user);
+
+    return { user, token, refreshToken };
+  }
+    
   async raw(): Promise<User> {
     const user = await this.storage.get<User>(AUTH_DATA_KEY);
     if (!user) throw new Error('User not found');
@@ -777,8 +834,8 @@ private async sendSMSOTP(phone: string, otp: string, provider: string) {
   // Helper to find the correct UserDO namespace dynamically
   private findUserDONamespace(): DurableObjectNamespace<UserDO> {
     // Try USERDO first (default)
-    if (this.env.USERDO) {
-      return this.env.USERDO as DurableObjectNamespace<UserDO>;
+    if (this.env.GATEWAY_DO) {
+      return this.env.GATEWAY_DO as DurableObjectNamespace<UserDO>;
     }
 
     // Look for any UserDO-compatible namespace in the environment

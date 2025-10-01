@@ -38,18 +38,11 @@
     "strict": true,
     /* Skip type checking all .d.ts files. */
     "skipLibCheck": true,
-    "declaration": true,
-    "declarationDir": "dist",
-    "outDir": "dist",
-    "rootDir": "."
   },
   "include": [
     "src/**/*"
   ],
   "exclude": [
-    "examples",
-    "examples/**/*",
-    "dist",
     "node_modules"
   ]
 }

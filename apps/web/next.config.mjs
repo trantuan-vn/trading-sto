@@ -43,6 +43,7 @@ const nextConfig = {
       '@radix-ui/react-icons',
       '@heroicons/react/24/outline',
     ],
+    optimizeFonts: true,
   },
 
   // Logging configuration
@@ -50,7 +51,8 @@ const nextConfig = {
     fetches: {
       fullUrl: true,
     },
-  },  
+  },
+  optimizeFonts: true,  
 }
 
 export default nextConfig

@@ -2,6 +2,9 @@
 
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
+import { headers } from 'next/headers';
+
+import { cookieToInitialState } from 'wagmi';
 
 import { Toaster } from "@/components/ui/sonner";
 import { APP_CONFIG } from "@/config/app-config";
@@ -11,9 +14,8 @@ import { AuthProvider } from "@/stores/wagmi/auth-provider";
 import { THEME_MODE_VALUES, THEME_PRESET_VALUES, type ThemePreset, type ThemeMode } from "@/types/preferences/theme";
 
 import "./globals.css";
-import { headers } from 'next/headers';
-import { cookieToInitialState } from 'wagmi';
-import { config } from '../config/wagmi-config';
+
+import { config } from "../config/wagmi-config";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -24,10 +26,10 @@ export const metadata: Metadata = {
 
 // export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  
+
   const themeMode = await getPreference<ThemeMode>("theme_mode", THEME_MODE_VALUES, "light");
   const themePreset = await getPreference<ThemePreset>("theme_preset", THEME_PRESET_VALUES, "default");
-  
+
   // Fetch cookies and initialize wagmi state
   const cookieHeader = (await headers()).get("cookie");
   const initialState = cookieToInitialState(config, cookieHeader);

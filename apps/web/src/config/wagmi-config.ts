@@ -10,12 +10,12 @@ export const config = createConfig({
   }),
   connectors: [
     walletConnect({
-      projectId: process.env.WALLETCONNECT_PROJECT_ID ?? '',
+      projectId: 'c17c648e814a42c99a410355f29b0ad5',
       metadata: {
-        name: 'Your App Name',
-        description: 'Your app description',
-        url: 'https://your-app-url.com',
-        icons: ['https://your-app-url.com/icon.png'],
+        name: 'Unitoken',
+        description: 'Unitoken',
+        url: 'http://beta.unitoken.trade',
+        icons: ['http://beta.unitoken.trade/icon.png'],
       },
     }),
     injected({ target: 'metaMask' }),

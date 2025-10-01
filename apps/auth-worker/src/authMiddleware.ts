@@ -5,19 +5,29 @@ import { decodeJWT } from './jwt-utils.js'
 
 const isRequestSecure = (c: Context) => new URL(c.req.url).protocol === 'https:'
 
+const setCookieWithOption = (c: Context, name: string, value: string, maxAge: number) => {
+  const cookieOptions = {
+    sameSite: 'none' as const, 
+    httpOnly: true,
+    secure: true,
+    path: '/',
+    domain: '.unitoken.trade',
+    maxAge: maxAge,
+  };
+  setCookie(c, name, value, cookieOptions);
+};
+
 export type GetUserDO = (c: Context, identifier: string) => UserDO
 
 export function createAuthMiddleware(getUserDO: GetUserDO, logPrefix = '') {
   return async (c: Context, next: Next) => {
-    const url = new URL(c.req.url)
     const token = getCookie(c, 'token') || ''
     const refreshToken = getCookie(c, 'refreshToken') || ''
 
     const prefix = logPrefix ? `[${logPrefix}] ` : ''
-    console.log(`🔐 ${prefix}Auth check for ${url.pathname}:`, {
-      hasToken: !!token,
-      hasRefreshToken: !!refreshToken
-    })
+    
+    // Luôn xóa user cũ trước khi xác thực lại
+    c.set('user', undefined)
 
     if (token || refreshToken) {
       try {
@@ -27,19 +37,27 @@ export function createAuthMiddleware(getUserDO: GetUserDO, logPrefix = '') {
 
         if (identifier) {
           const userDO = getUserDO(c, identifier)
-          let result = await userDO.verifyToken({ token })
-          console.log(`🔑 ${prefix}Token verification for ${identifier}:`, { success: result.ok })
+          
+          // Tối ưu 1: Kiểm tra token expiration trước khi verify
+          const tokenPayload = decodeJWT(token)
+          const refreshTokenPayload = decodeJWT(refreshToken)
+          
+          const isTokenExpired = tokenPayload?.exp && tokenPayload.exp < Date.now() / 1000
+          const isRefreshTokenExpired = refreshTokenPayload?.exp && refreshTokenPayload.exp < Date.now() / 1000
 
-          if (!result.ok && refreshToken) {
+          let result: { ok: boolean; user?: any } = { ok: false }
+
+          // Case 1: Token còn hạn → verify luôn
+          if (token && !isTokenExpired) {
+            result = await userDO.verifyToken({ token })
+            console.log(`🔑 ${prefix}Token verification for ${identifier}:`, { success: result.ok })
+          }
+          // Case 2: Token hết hạn nhưng refresh token còn hạn → refresh
+          else if (refreshToken && !isRefreshTokenExpired) {
+            console.log(`🔄 ${prefix}Token expired, attempting refresh...`)
             try {
-              console.log(`🔄 ${prefix}Attempting token refresh...`)
               const { token: newToken } = await userDO.refreshToken({ refreshToken })
-              setCookie(c, 'token', newToken, {
-                httpOnly: true,
-                secure: isRequestSecure(c),
-                path: '/',
-                sameSite: 'Lax'
-              })
+              setCookieWithOption(c, "token", newToken, 10*60);
               result = await userDO.verifyToken({ token: newToken })
               console.log(`✅ ${prefix}Token refreshed successfully`)
             } catch (e) {
@@ -48,14 +66,26 @@ export function createAuthMiddleware(getUserDO: GetUserDO, logPrefix = '') {
               deleteCookie(c, 'refreshToken')
             }
           }
+          // Case 3: Cả hai đều hết hạn → clear auth
+          else {
+            console.log(`❌ ${prefix}All tokens expired`)
+            deleteCookie(c, 'token')
+            deleteCookie(c, 'refreshToken')
+          }
 
           if (result.ok && result.user) {
             console.log(`👤 ${prefix}User set: ${result.user.identifier}`)
             c.set('user', result.user)
           }
+        } else {
+          // Không có identifier hợp lệ
+          deleteCookie(c, 'token')
+          deleteCookie(c, 'refreshToken')
         }
       } catch (e) {
         console.error(`${prefix}Auth error:`, e)
+        deleteCookie(c, 'token')
+        deleteCookie(c, 'refreshToken')
       }
     }
 
