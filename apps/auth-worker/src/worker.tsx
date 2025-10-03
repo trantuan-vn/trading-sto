@@ -49,8 +49,20 @@ const setCookieWithOption = (c: Context, name: string, value: string, maxAge: nu
 };
 
 const clearAuthCookies = (c: Context) => {
-  deleteCookie(c, 'token');
-  deleteCookie(c, 'refreshToken');
+  deleteCookie(c, 'token', {
+    path: '/',
+    domain: '.unitoken.trade',
+    secure: true,
+    sameSite: 'none',
+    httpOnly: true,
+  });
+  deleteCookie(c, 'refreshToken', {
+    path: '/',
+    domain: '.unitoken.trade',
+    secure: true,
+    sameSite: 'none',
+    httpOnly: true,
+  });
 };
 
 const parseBody = async (c: Context, schema: any) => {
@@ -384,7 +396,7 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
   }));
 
   // Auth middleware
-  routes.use('/*', createAuthMiddleware(getUserDO));
+  routes.use('/*', createAuthMiddleware(getUserDO));  
 
   // ---  oauth AUTH ENDPOINTS ---
   // --- Thêm endpoint để lấy OAuth URL ---
@@ -478,6 +490,7 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
     } catch (e) {
       err("OAuth callback failed:", e);
       const { errorResponse, status } = handleError(e, "OAuth callback failed");
+      clearAuthCookies(c);
       return c.json(errorResponse, status);
     }
   });  
@@ -495,7 +508,7 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
           return c.json(errorResponse, status);
       }
   });
-
+  
   routes.post('/api/otp/verify', async (c) => {
       try {
           const { identifier, otp } = await parseBody(c, OTPVerificationSchema);
@@ -503,11 +516,11 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
           const { user, token, refreshToken } = await userDO.verifyOTP({ identifier, otp });
           setCookieWithOption(c, "token", token, 10*60);
           setCookieWithOption(c, "refreshToken", refreshToken, 7*24*60*60);
-          const redirectUrl = `${getFrontendUrl(c)}`;
-          return c.redirect(redirectUrl);
+          return c.json({ ok: true });
       }
       catch (e) {
           const { errorResponse, status } = handleError(e, "OTP verification failed");
+          clearAuthCookies(c);
           return c.json(errorResponse, status);
       }
   });
@@ -542,9 +555,9 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
 
       // Origin check
       const origin = c.req.header('origin') || c.req.header('referer');
-      log("Origin:", origin, "BASE_URL:", c.env.BASE_URL);
+      log("Origin:", origin, "FRONTEND_URL:", c.env.FRONTEND_URL);
 
-      if (!origin || !origin.startsWith(c.env.BASE_URL)) {
+      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
         err("Bad origin check failed");
         return c.json({ error: 'Bad origin' }, 403);
       }
@@ -604,19 +617,25 @@ function createRoutes(getUserDO: (c: Context, identifier: string) => UserDO) {
 
       setCookieWithOption(c, "token", token, 10*60);
       setCookieWithOption(c, "refreshToken", refreshToken, 7*24*60*60);      
-      deleteCookie(c, 'siwe_session'); // huỷ session sau login
+      deleteCookie(c, 'siwe_session', {
+        path: '/',
+        domain: '.unitoken.trade',
+        secure: true,
+        sameSite: 'none',
+        httpOnly: true,}
+      );
+      // huỷ session sau login
       await deleteNonce(c.env, sessionId);
 
-      const redirectUrl = `${getFrontendUrl(c)}`;
-      return c.redirect(redirectUrl);
+      return c.json({ ok: true });
+      
     } catch (e) {
       err("Wallet connect failed:", e);
       const { errorResponse, status } = handleError(e, "Wallet connection failed");
+      clearAuthCookies(c);
       return c.json(errorResponse, status);
     }
   });
-
-
 
   // logout
   routes.post('/api/logout', async (c) => {
