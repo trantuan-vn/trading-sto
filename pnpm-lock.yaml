@@ -147,6 +147,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
+      '@tsndr/cloudflare-worker-jwt':
+        specifier: ^3.1.7
+        version: 3.2.0
       '@wagmi/connectors':
         specifier: ^5.9.9
         version: 5.9.9(@types/react@18.3.24)(@wagmi/core@2.20.3(@tanstack/query-core@5.87.4)(@types/react@18.3.24)(react@19.1.1)(typescript@5.9.2)(use-sync-external-store@1.4.0(react@19.1.1))(viem@2.37.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76)))(aws4fetch@1.0.20)(bufferutil@4.0.9)(react@19.1.1)(typescript@5.9.2)(use-sync-external-store@1.4.0(react@19.1.1))(utf-8-validate@5.0.10)(viem@2.37.5(bufferutil@4.0.9)(typescript@5.9.2)(utf-8-validate@5.0.10)(zod@3.25.76))(zod@3.25.76)
@@ -180,6 +183,9 @@ importers:
       jsonwebtoken:
         specifier: ^9.0.2
         version: 9.0.2
+      lodash:
+        specifier: ^4.17.21
+        version: 4.17.21
       lucide-react:
         specifier: ^0.453.0
         version: 0.453.0(react@19.1.1)
@@ -227,7 +233,7 @@ importers:
         version: 3.3.1
       userdo:
         specifier: ^0.1.63
-        version: link:../auth-worker
+        version: 0.1.63(@cloudflare/workers-types@4.20250912.0)
       vaul:
         specifier: ^1.1.2
         version: 1.1.2(@types/react-dom@18.3.7(@types/react@18.3.24))(@types/react@18.3.24)(react-dom@19.1.1(react@19.1.1))(react@19.1.1)
@@ -265,6 +271,9 @@ importers:
       '@types/jsonwebtoken':
         specifier: ^9.0.10
         version: 9.0.10
+      '@types/lodash':
+        specifier: ^4.17.20
+        version: 4.17.20
       '@types/node':
         specifier: ^22.17.2
         version: 22.18.0
@@ -6584,6 +6593,9 @@ packages:
     resolution: {integrity: sha512-Rb46I4cGGVBmjamjphe8L/UnvJD+uPPtTkNvX5mZgqdbavhI4EbgIWJiIHXJ8bc/i9EQGPRh4DwEURJ552Do0A==}
     peerDependencies:
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  userdo@0.1.63:
+    resolution: {integrity: sha512-GLTzdKIZVYkmO2K99sUyzySHpTISSlWb0CIw1S9pxYdGv4nOPAdK7bU9132YTXWSzYkmHwKd7WHrsPrTkGP2Ww==}
 
   utf-8-validate@5.0.10:
     resolution: {integrity: sha512-Z6czzLq4u8fPOyx7TU6X3dvUZVvoJmxSQ+IcrlmagKhilxlhZgxPK6C5Jqbkw1IDUmFTM+cz9QDnnLTwDz/2gQ==}
@@ -14975,6 +14987,45 @@ snapshots:
   use-sync-external-store@1.5.0(react@19.1.1):
     dependencies:
       react: 19.1.1
+
+  userdo@0.1.63(@cloudflare/workers-types@4.20250912.0):
+    dependencies:
+      '@tsndr/cloudflare-worker-jwt': 3.2.0
+      '@types/node': 24.5.0
+      drizzle-orm: 0.44.5(@cloudflare/workers-types@4.20250912.0)
+      hono: 4.9.7
+      reconnecting-websocket: 4.4.0
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@aws-sdk/client-rds-data'
+      - '@cloudflare/workers-types'
+      - '@electric-sql/pglite'
+      - '@libsql/client'
+      - '@libsql/client-wasm'
+      - '@neondatabase/serverless'
+      - '@op-engineering/op-sqlite'
+      - '@opentelemetry/api'
+      - '@planetscale/database'
+      - '@prisma/client'
+      - '@tidbcloud/serverless'
+      - '@types/better-sqlite3'
+      - '@types/pg'
+      - '@types/sql.js'
+      - '@upstash/redis'
+      - '@vercel/postgres'
+      - '@xata.io/client'
+      - better-sqlite3
+      - bun-types
+      - expo-sqlite
+      - gel
+      - knex
+      - kysely
+      - mysql2
+      - pg
+      - postgres
+      - prisma
+      - sql.js
+      - sqlite3
 
   utf-8-validate@5.0.10:
     dependencies:

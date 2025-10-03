@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { AppSidebar } from "@/app/(main)/dashboard/_components/sidebar/app-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
-import { getUserFromAPI } from "@/data/users";
+import { getUserFromToken } from "@/data/users";
 import { cn } from "@/lib/utils";
 import { getPreference } from "@/server/server-actions";
 import {
@@ -25,7 +25,7 @@ import { ThemeSwitcher } from "./_components/sidebar/theme-switcher";
 // export default async function Layout({ children }: Readonly<{ children: ReactNode }>) {
 export default async function Layout({ children }: LayoutProps<"/dashboard">) {
   const cookieStore = await cookies();
-  const user = await getUserFromAPI(cookieStore.toString());
+  const user = getUserFromToken(cookieStore.get("token")?.value);
   const defaultOpen = cookieStore.get("sidebar_state")?.value === "true";
 
   const [sidebarVariant, sidebarCollapsible, contentLayout] = await Promise.all([

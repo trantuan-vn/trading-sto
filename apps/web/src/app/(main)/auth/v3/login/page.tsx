@@ -5,7 +5,10 @@ import { Globe } from "lucide-react";
 import { APP_CONFIG } from "@/config/app-config";
 
 import { LoginForm } from "../../_components/login-form";
+import { FacebookButton } from "../../_components/social-auth/facebook-button";
+import { GithubButton } from "../../_components/social-auth/github-button";
 import { GoogleButton } from "../../_components/social-auth/google-button";
+import { WalletConnectButton } from "../../_components/web3/walletconnect-button";
 
 export default function Page() {
   return (
@@ -16,11 +19,14 @@ export default function Page() {
           <p className="text-muted-foreground text-sm">Please enter your details to login.</p>
         </div>
         <div className="space-y-4">
-          <GoogleButton className="w-full" />
+          <LoginForm />
           <div className="after:border-border relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-t">
             <span className="bg-background text-muted-foreground relative z-10 px-2">Or continue with</span>
           </div>
-          <LoginForm />
+          <GoogleButton className="w-full" />
+          <FacebookButton className="w-full" />
+          <GithubButton className="w-full" />
+          <WalletConnectButton className="w-full" />
         </div>
       </div>
 

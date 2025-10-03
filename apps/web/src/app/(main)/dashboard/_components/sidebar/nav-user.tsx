@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { UserPen, CircleUser, CreditCard, MessageSquareDot, LogOut, LogIn } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -21,20 +23,45 @@ export function NavUser({
 }) {
   const { isMobile } = useSidebar();
 
+  const handleLogout = async () => {
+    try {
+      const response = await fetch("https://api.unitoken.trade/api/logout", {
+        method: "POST",
+        credentials: "include", // Include cookies in the request
+      });
+      if (response.ok) {
+        // Handle successful logout (e.g., redirect or update state)
+        window.location.href = "/"; // Redirect to login page
+      } else {
+        console.error("Logout failed");
+      }
+    } catch (error) {
+      console.error("Error during logout:", error);
+    }
+  };
+
+  const menuItems = user
+    ? [
+        { title: "Account", icon: CircleUser, url: "/account" },
+        { title: "Billing", icon: CreditCard, url: "/billing" },
+        { title: "Notifications", icon: MessageSquareDot, url: "/notifications" },
+        { title: "Log out", icon: LogOut, url: "#", onClick: handleLogout },
+      ]
+    : [{ title: "Log In", icon: LogIn, url: "/login" }];
+
   const renderMenuItems = () => (
     <DropdownMenuGroup>
-      <DropdownMenuItem>
-        <CircleUser className="mr-2 h-4 w-4" />
-        Account
-      </DropdownMenuItem>
-      <DropdownMenuItem>
-        <CreditCard className="mr-2 h-4 w-4" />
-        Billing
-      </DropdownMenuItem>
-      <DropdownMenuItem>
-        <MessageSquareDot className="mr-2 h-4 w-4" />
-        Notifications
-      </DropdownMenuItem>
+      {menuItems.slice(0, user ? -1 : undefined).map((item, index) => (
+        <DropdownMenuItem key={index}>
+          <Link href={item.url} className="flex items-center w-full">
+            {(() => {
+              const Icon = item.icon;
+              return <Icon className="mr-2 h-4 w-4" />;
+            })()}
+            <span>{item.title}</span>
+          </Link>
+        </DropdownMenuItem>
+      ))}
     </DropdownMenuGroup>
   );
 
@@ -43,16 +70,29 @@ export function NavUser({
       {renderMenuItems()}
       <DropdownMenuSeparator />
       <DropdownMenuItem>
-        <LogOut className="mr-2 h-4 w-4" />
-        Log out
+        <button
+          onClick={menuItems[menuItems.length - 1].onClick}
+          className="flex items-center w-full"
+        >
+          {(() => {
+            const Icon = menuItems[menuItems.length - 1].icon;
+            return <Icon className="mr-2 h-4 w-4" />;
+          })()}
+          <span>{menuItems[menuItems.length - 1].title}</span>
+        </button>
       </DropdownMenuItem>
     </>
   );
 
   const renderLoggedOutContent = () => (
     <DropdownMenuItem>
-      <LogIn className="mr-2 h-4 w-4" />
-      Log In
+      <Link href={menuItems[0].url} className="flex items-center w-full">
+        {(() => {
+          const Icon = menuItems[0].icon;
+          return <Icon className="mr-2 h-4 w-4" />;
+        })()}
+        <span>{menuItems[0].title}</span>
+      </Link>
     </DropdownMenuItem>
   );
 
@@ -66,7 +106,7 @@ export function NavUser({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-dropdown-menu-trigger-width) min-w-56 rounded-lg"
+            className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
             side={isMobile ? "bottom" : "right"}
             align="end"
             sideOffset={4}

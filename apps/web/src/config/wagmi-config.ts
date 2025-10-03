@@ -1,6 +1,6 @@
-import { walletConnect, injected } from '@wagmi/connectors';
-import { createConfig, http, cookieStorage, createStorage } from 'wagmi';
-import { mainnet, sepolia } from 'wagmi/chains';
+import { walletConnect } from "@wagmi/connectors";
+import { createConfig, http, cookieStorage, createStorage } from "wagmi";
+import { mainnet, sepolia } from "wagmi/chains";
 
 export const config = createConfig({
   chains: [mainnet, sepolia],
@@ -10,7 +10,7 @@ export const config = createConfig({
   }),
   connectors: [
     walletConnect({
-      projectId: 'c17c648e814a42c99a410355f29b0ad5',
+      projectId: "c17c648e814a42c99a410355f29b0ad5",
       metadata: {
         name: 'Unitoken',
         description: 'Unitoken',
@@ -18,7 +18,6 @@ export const config = createConfig({
         icons: ['http://beta.unitoken.trade/icon.png'],
       },
     }),
-    injected({ target: 'metaMask' }),
   ],
   transports: {
     [mainnet.id]: http(),
