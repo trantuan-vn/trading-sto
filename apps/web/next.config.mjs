@@ -1,18 +1,23 @@
+// next.config.mjs (hoặc next.config.js với "type": "module" trong package.json)
+import createNextIntlPlugin from 'next-intl/plugin';
+
+const withNextIntl = createNextIntlPlugin();
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  reactStrictMode: true,
   // compiler: {
   //   removeConsole: process.env.NODE_ENV === "production",
   // },
   async redirects() {
     return [
       {
-        source: "/dashboard",
-        destination: "/dashboard/default",
+        source: '/dashboard',
+        destination: '/dashboard/default',
         permanent: false,
       },
     ];
   },
-  reactStrictMode: true,
   // Webpack configuration với cú pháp hiện đại
   webpack: (config, { isServer }) => {
     // Thêm các externals cần thiết
@@ -55,4 +60,4 @@ const nextConfig = {
   optimizeFonts: true,  
 }
 
-export default nextConfig
+export default withNextIntl(nextConfig);

@@ -1,16 +1,16 @@
-// import { ReactNode } from "react";
-
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import { headers } from 'next/headers';
+import { headers } from "next/headers";
 
-import { cookieToInitialState } from 'wagmi';
+import { NextIntlClientProvider } from "next-intl";
+import { cookieToInitialState } from "wagmi";
 
 import { Toaster } from "@/components/ui/sonner";
 import { APP_CONFIG } from "@/config/app-config";
 import { getPreference } from "@/server/server-actions";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { AuthProvider } from "@/stores/wagmi/auth-provider";
+import { LOCALE_VALUES, type Locale } from "@/types/preferences/locale";
 import { THEME_MODE_VALUES, THEME_PRESET_VALUES, type ThemePreset, type ThemeMode } from "@/types/preferences/theme";
 
 import "./globals.css";
@@ -23,20 +23,17 @@ export const metadata: Metadata = {
   title: APP_CONFIG.meta.title,
   description: APP_CONFIG.meta.description,
 };
-
-// export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
 export default async function RootLayout({ children }: LayoutProps<"/">) {
 
   const themeMode = await getPreference<ThemeMode>("theme_mode", THEME_MODE_VALUES, "light");
   const themePreset = await getPreference<ThemePreset>("theme_preset", THEME_PRESET_VALUES, "default");
-
-  // Fetch cookies and initialize wagmi state
+  const locale = await getPreference<Locale>("locale", LOCALE_VALUES, "en-US");
   const cookieHeader = (await headers()).get("cookie");
   const initialState = cookieToInitialState(config, cookieHeader);
 
   return (
     <html
-      lang="en"
+      lang={locale}
       className={themeMode === "dark" ? "dark" : ""}
       data-theme-preset={themePreset}
       suppressHydrationWarning
@@ -49,14 +46,15 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         <link rel="apple-touch-icon" sizes="76x76" href="/icons/icon-76x76.png" />
         {/* Android/Chrome progressive web app icons */}
         <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#000000" />
       </head>
       <body className={`${inter.className} min-h-screen antialiased`}>
-        <PreferencesStoreProvider themeMode={themeMode} themePreset={themePreset}>
-          <AuthProvider initialState={initialState}>
-            {children}
-            <Toaster />
-          </AuthProvider>
+        <PreferencesStoreProvider themeMode={themeMode} themePreset={themePreset} locale={locale}>
+          <NextIntlClientProvider>
+            <AuthProvider initialState={initialState}>
+              {children}
+              <Toaster />
+            </AuthProvider>
+          </NextIntlClientProvider>
         </PreferencesStoreProvider>
       </body>
     </html>

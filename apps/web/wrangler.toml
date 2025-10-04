@@ -5,8 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 NEXT_PUBLIC_DEBUG = "true"
-JWT_SECRET = "164d2228a6fec9dcfb9dd5b006c7c4578d7a1ad650a7630a5c2af91d12a25eeb"
-WALLETCONNECT_PROJECT_ID = "c17c648e814a42c99a410355f29b0ad5"
 
 [limits]
 cpu_ms = 300000
@@ -14,7 +12,6 @@ cpu_ms = 300000
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"
-
 [[routes]]
 pattern = "beta.unitoken.trade"
 custom_domain = true
