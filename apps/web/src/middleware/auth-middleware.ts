@@ -1,25 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { verifyJWT } from "@/lib/utils";
+import { getUserFromToken } from "@/data/users";
 
 export async function authMiddleware(req: NextRequest) {
-  // ✅ Truy cập JWT_SECRET từ cả .env và wrangler.jsonc
-  const jwtSecret = process.env.JWT_SECRET;
-  if (!jwtSecret) {
-    console.error("JWT_SECRET is not defined in environment variables");
-    return NextResponse.redirect(new URL("/auth/v3/login", req.url));
-  }
 
   const { pathname } = req.nextUrl;
-  let isLoggedIn = false;
-  const token = req.cookies.get("token");
-  const tokenVerificationResult = token ? await verifyJWT(token.value, jwtSecret) : { ok: false };
-  isLoggedIn = tokenVerificationResult.ok;
-  if (!tokenVerificationResult.ok){
-    const refreshToken = req.cookies.get("refreshToken");
-    const refreshTokenVerificationResult = refreshToken ? await verifyJWT(refreshToken.value, jwtSecret) : { ok: false };
-    isLoggedIn = refreshTokenVerificationResult.ok;
-  }
+  const user = await getUserFromToken(req.cookies.get("token")?.value, req.cookies.get("refreshToken")?.value);
+  const isLoggedIn = !!user;
+
+  console.log("=== DEBUG INFO ===");
+  console.log("pathname:", pathname);
+  console.log("isLoggedIn:", isLoggedIn);
+  console.log("pathname.startsWith('/dashboard'):", pathname.startsWith("/dashboard"));
+  console.log("!isLoggedIn && pathname.startsWith('/dashboard'):", !isLoggedIn && pathname.startsWith("/dashboard"));
 
   if (!isLoggedIn && pathname.startsWith("/dashboard")) {
     console.log(`Redirecting to login page due to unauthenticated request to ${pathname}`);

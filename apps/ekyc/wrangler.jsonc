@@ -1,0 +1,29 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "ekyc",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-10-04",
+	"observability": {
+		"enabled": true
+	},
+
+	"vars": {
+		"ACCOUNT_ID": "e76b7bb989f93985402e1a61e6cd5ff3",  // Lấy từ dashboard Cloudflare > Overview
+		"JWT_SECRET": "164d2228a6fec9dcfb9dd5b006c7c4578d7a1ad650a7630a5c2af91d12a25eeb",
+	},
+
+	// AI binding: Để gọi Workers AI models (non-inheritable, chỉ 1 binding/project)
+	"ai": {
+		"binding": "AI"  // Tên biến dùng trong code: env.AI.run(...)
+	},
+	"routes": [
+		{
+		"pattern": "ekyc.unitoken.trade",
+		"custom_domain": true
+		}
+	]
+}

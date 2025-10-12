@@ -1,0 +1,16 @@
+name = "vnpay"
+compatibility_date = "2023-10-01"
+compatibility_flags = ["nodejs_compat"]
+main = "worker.js"
+
+[vars]
+NODE_ENV = "production"
+
+[[routes]]
+pattern = "pay.unitoken.trade"
+custom_domain = true
+
+# Thêm các binding nếu cần (database, R2, KV, etc.)
+# [[kv_namespaces]]
+# binding = "MY_KV"
+# id = "kv_id_here"

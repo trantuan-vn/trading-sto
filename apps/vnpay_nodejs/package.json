@@ -1,0 +1,44 @@
+{
+  "name": "demopaymentnodb",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev:node": "node bin/www.js",
+    "dev:worker": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "start": "wrangler dev",
+    "build": "your-build-script-if-any"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "await": "^0.2.6",
+    "axios": "^1.12.2",
+    "body-parser": "^1.20.3",
+    "bootstrap": "^5.3.8",
+    "config": "^1.31.0",
+    "cookie-parser": "^1.4.4",
+    "crypto": "^1.0.1",
+    "dateformat": "^2.2.0",
+    "debug": "^3.2.6",
+    "express": "^4.17.1",
+    "itty-router": "^5.0.22",
+    "jade": "^0.29.0",
+    "jquery": "^3.4.0",
+    "md5": "^2.2.1",
+    "moment": "^2.29.4",
+    "morgan": "^1.10.1",
+    "node-fetch": "^2.6.9",
+    "qs": "^6.11.0",
+    "serve-favicon": "^2.4.5",
+    "set-tz": "^0.2.0",
+    "sha256": "^0.2.0"
+  },
+  "description": "1. Cài đặt nodejs lên máy cần chạy. Download nodejs tại: https://nodejs.org/en/\r 2. Vào command (cmd) và chuyển tới thư mục code demo\r 3. Cài đặt module cần thiết bằng lệnh: npm install\r 4. Cấu hình giá trị cho các tham số: vnp_TmnCode,vnp_HashSecret trong file\\vnpay_nodejs\\config\\default.json. Nếu chưa có các thông tin này, vui lòng liên hệ với VNPAY\r 5. Chạy ứng dụng: npm start app.js. Ứng dụng sẽ start ở port 8888.\r 6. Mở trình duyệt và truy cập vào địa chỉ: http://localhost:8888 để bắt đầu chạy demo\r 7. Thông tin hướng dẫn kết nối tham khảo thêm tại địa chỉ: https://sandbox.vnpayment.vn/apis/",
+  "main": "app.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "wrangler": "^4.42.1"
+  }
+}

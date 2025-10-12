@@ -84,15 +84,3 @@ function isTokenExpired(payload: JwtPayload): boolean {
   if (!payload.exp) return false;
   return payload.exp < Math.floor(Date.now() / 1000);
 }
-
-export function decodeJWT(token: string): JwtPayload | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-
-    const payload = JSON.parse(atob(parts[1]));
-    return payload as JwtPayload;
-  } catch {
-    return null;
-  }
-}
