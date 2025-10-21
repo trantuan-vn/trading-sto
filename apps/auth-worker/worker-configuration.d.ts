@@ -23,7 +23,9 @@ declare namespace Cloudflare {
         TWITTER_CLIENT_SECRET: string;
         FRONTEND_URL: string;
         BASE_URL: string;        
-		GATEWAY_DO: DurableObjectNamespace<import("./src/worker/index").GatewayDO>;
+		BROADCAST_SERVICE_DO: DurableObjectNamespace<import("./src/shared/infrastructure/BroadcastServiceDO").BroadcastServiceDO>;
+        USER_SHARD_DO: DurableObjectNamespace<import("./src/shared/infrastructure/UserShardDO").UserShardDO>;
+        USER_DO: DurableObjectNamespace<import("./src/shared/infrastructure/UserDO").UserDO>;
 		ASSETS: Fetcher;
         NONCE_KV: KVNamespace;
         DEBUG: string;

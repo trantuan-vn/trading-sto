@@ -95,7 +95,7 @@ export function LoginForm() {
 
     setIsLoading(true);
     try {
-      const response = await fetch("https://api.unitoken.trade/api/otp/verify", {
+      const response = await fetch("https://api.unitoken.trade/auth/otp/verify", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -130,7 +130,7 @@ export function LoginForm() {
       if (!isMounted.current) return;
       setIsLoading(true);
       try {
-        const requestResponse = await fetch("https://api.unitoken.trade/api/otp/request", {
+        const requestResponse = await fetch("https://api.unitoken.trade/auth/otp/request", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

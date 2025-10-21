@@ -57,7 +57,7 @@ export function NavUser({
       await checkDisconnected();
 
       // Call API logout
-      const response = await fetch("https://api.unitoken.trade/api/logout", {
+      const response = await fetch("https://api.unitoken.trade/auth/profile/logout", {
         method: "POST",
         credentials: "include",
       });

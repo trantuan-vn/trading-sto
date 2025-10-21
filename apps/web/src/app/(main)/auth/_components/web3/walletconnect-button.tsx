@@ -38,7 +38,7 @@ export function WalletConnectButton({ className, ...props }: React.ComponentProp
       // Thông báo cho người dùng biết đang lấy thông tin xác thực
       toast.info("Đang chuẩn bị thông tin xác thực...");
 
-      const nonceResponse = await fetch("https://api.unitoken.trade/api/wallet/nonce", {
+      const nonceResponse = await fetch("https://api.unitoken.trade/auth/wallet/nonce", {
         method: "GET",
         credentials: "include",
       });
@@ -88,7 +88,7 @@ export function WalletConnectButton({ className, ...props }: React.ComponentProp
       // Thông báo đang xác minh chữ ký
       toast.info("Đang xác minh chữ ký...");
 
-      const connectResponse = await fetch("https://api.unitoken.trade/api/wallet/connect", {
+      const connectResponse = await fetch("https://api.unitoken.trade/auth/wallet/connect", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
