@@ -1,28 +1,36 @@
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie'  
-import { handleError, parseBody } from '../../shared/utils';
+import { handleError, parseBody, getIPAndUserAgent } from '../../shared/utils';
 
 import { requireAuth } from './authMiddleware';
 import { createApplicationService } from './application';
 import { OTPRequestSchema, OTPVerificationSchema, OAuthCallbackSchema, SIWEAuthSchema } from './domain';
-import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier} from './utils';
+import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier, getSessionIdHash } from './utils';
+import { AUTH_CONSTANTS } from './constants';
 
 export function createAuthRoutes(bindingName: string) {
   const routes = new Hono<{ Bindings: Env }>();
-
+  // I. OAUTH
   routes.get('/oauth/:provider/url', async (c) => {
 
     try {
       const provider = c.req.param('provider') as 'google' | 'apple' | 'facebook' | 'github' | 'twitter';
+
+      if (!provider) {
+        throw new Error('Missing OAuth provider');
+      }
       
       if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
-        return c.json({ error: 'Invalid OAuth provider' }, 400);
+        throw new Error(`Unsupported OAuth provider: ${provider}`);
       }
+      const {ipAddress, userAgent} = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
 
       const applicationService = createApplicationService(c, bindingName);
-      const { sessionId, authUrl } = await applicationService.getAuthUrlUseCase(provider);
-
-      setCookieWithOption(c, 'sessionId', sessionId, 5*60);
+      const authUrl = await applicationService.getAuthUrlUseCase(provider, sessionId);
 
       return c.json({ url: authUrl });
 
@@ -35,52 +43,55 @@ export function createAuthRoutes(bindingName: string) {
   routes.get('/oauth/:provider/callback', async (c) => {
 
     try {
+      // Origin check
+      const origin = c.req.header('origin') || c.req.header('referer');
+      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
+        throw new Error('Invalid origin');
+      }
+
+      const {ipAddress, userAgent} = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+
       const provider = c.req.param('provider') as 'google' | 'apple' | 'facebook' | 'github' | 'twitter';
       // Validate provider
       if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
-        const { errorResponse, status } = handleError(new Error('Invalid OAuth provider'), `Validate provider error for ${provider}`);
-        return c.json(errorResponse, status);
+        throw new Error(`Unsupported OAuth provider: ${provider}`);
       }
       
       // Check for OAuth errors
       const error = c.req.query('error');
       if (error) {
-        const { errorResponse, status } = handleError(new Error(c.req.query('error_description') || error), `Check for OAuth error for ${provider}`);
-        return c.json(errorResponse, status);
+        throw new Error(`OAuth error: ${error}`);
       }
 
       const { code, state } = OAuthCallbackSchema.parse(c.req.query());
 
       // Validate code
       if (!code) {
-        const { errorResponse, status } = handleError(new Error('Invalid OAuth code'), `Validate code error for ${provider}`);
-        return c.json(errorResponse, status);
+        throw new Error('Missing OAuth code');
       }
 
       // Validate state
       if (!state) {
-        const { errorResponse, status } = handleError(new Error('Invalid OAuth state'), `Validate state error for ${provider}`);
-        return c.json(errorResponse, status);
+        throw new Error('Missing OAuth state');
       }
 
-      // Validate sessionId
-      const sessionId = getCookie(c, 'sessionId');
-      if (!sessionId) {
-        const { errorResponse, status } = handleError(new Error('Invalid OAuth state'), `Validate state error for ${provider}`);
-        return c.json(errorResponse, status);
-      }
       const applicationService = createApplicationService(c, bindingName);
 
       // Exchange code for tokens
-      const { tokenData, validatedUserInfo } = await applicationService.exchangeOAuthCodeUseCase(provider, sessionId, state, code);
+      const validatedUserInfo = await applicationService.exchangeOAuthCodeUseCase(provider, sessionId, state, code);
             
       // Normalize identifier based on provider
       const identifier = normalizeOAuthIdentifier(provider, validatedUserInfo);
       
-      const { token, refreshToken } = await applicationService.connectOAuthUseCase(provider, identifier, tokenData, validatedUserInfo);
+      const { token, refreshToken } = await applicationService.connectOAuthUseCase(sessionId, identifier, ipAddress, userAgent);
 
-      setCookieWithOption(c, "token", token, 15*60);
-      setCookieWithOption(c, "refreshToken", refreshToken, 24*60*60);
+      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
+      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
 
       const redirectUrl = `${c.env.FRONTEND_URL}`;
 
@@ -93,18 +104,22 @@ export function createAuthRoutes(bindingName: string) {
     }
   });  
   
-  // ---  email/phone AUTH ENDPOINTS ---
+  // II. OTP
   routes.post('/otp/request', async (c) => {
     try {
       const { identifier } = await parseBody(c, OTPRequestSchema);
       if (!identifier) {
-        const { errorResponse, status } = handleError(new Error('Invalid identifier'), "Validate identifier error");
-        return c.json(errorResponse, status);
+        throw new Error('Missing identifier');
       }
-      const applicationService = createApplicationService(c, bindingName);
-      const  sessionId = await applicationService.getRequestOtpUseCase(identifier);
 
-      setCookieWithOption(c, 'sessionId', sessionId, 5*60);
+      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+
+      const applicationService = createApplicationService(c, bindingName);
+      await applicationService.getRequestOtpUseCase(identifier, sessionId);
 
       return c.json({ ok: true });
     }
@@ -116,21 +131,30 @@ export function createAuthRoutes(bindingName: string) {
   
   routes.post('/otp/verify', async (c) => {
     try {
+      // Origin check
+      const origin = c.req.header('origin') || c.req.header('referer');
+      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
+        throw new Error('Invalid origin');
+      }
+
       const { identifier, otp } = await parseBody(c, OTPVerificationSchema);
       if (!identifier || !otp) {
-        const { errorResponse, status } = handleError(new Error('Invalid identifier or otp'), "Validate identifier or otp error");
-        return c.json(errorResponse, status);
+        throw new Error('Missing identifier or OTP');
       }
-      // Validate sessionId
-      const sessionId = getCookie(c, 'sessionId');
-      if (!sessionId) {
-        const { errorResponse, status } = handleError(new Error('Invalid sessionId'), "Validate sessionId error");
-        return c.json(errorResponse, status);
+      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
       }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+
       const applicationService = createApplicationService(c, bindingName);
-      const { token, refreshToken } = await applicationService.verifyOtpUseCase(identifier, sessionId, otp);
-      setCookieWithOption(c, "token", token, 10*60);
-      setCookieWithOption(c, "refreshToken", refreshToken, 24*60*60);
+
+      const { token, refreshToken } = await applicationService.verifyOtpUseCase(identifier, sessionId, otp, ipAddress, userAgent);
+
+      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
+      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+
       return c.json({ ok: true });
     }
     catch (e) {
@@ -139,21 +163,24 @@ export function createAuthRoutes(bindingName: string) {
       return c.json(errorResponse, status);
     }
   });
-
-  // ---  wallet endpoint để lấy nonce/connect ---
+  
+  // III. Wallet
   routes.get('/wallet/nonce', async (c) => {
     try {
+      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
       const applicationService = createApplicationService(c, bindingName);
-      const { nonce, sessionId } = await applicationService.generateNonceUseCase();
-      // Set cookie session
-      setCookieWithOption(c, "sessionId", sessionId, 5*60);
+      const nonce= await applicationService.generateNonceUseCase(sessionId);
+
       return c.json({ nonce: nonce });
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "OTP request failed");
+      const { errorResponse, status } = handleError(e, "Nonce request failed");
       return c.json(errorResponse, status);
     }
   });
-
 
   routes.post('/wallet/connect', async (c) => {
     try {
@@ -161,19 +188,19 @@ export function createAuthRoutes(bindingName: string) {
       const origin = c.req.header('origin') || c.req.header('referer');
 
       if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
-        return c.json({ error: 'Bad origin' }, 403);
+        throw new Error('Invalid origin');
       }
 
       const { message, signature } = await parseBody(c, SIWEAuthSchema);
       if (!message || !signature) {
-        return c.json({ error: 'Missing message or signature' }, 400);
+        throw new Error('Missing message or signature');
       }
 
-      // Lấy sessionId từ cookie
-      const sessionId = getCookie(c, 'sessionId');
-      if (!sessionId) {
-        return c.json({ error: 'Session not found' }, 400);
+      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
       }
+      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
 
       const applicationService = createApplicationService(c, bindingName);
       const fields = await applicationService.verifySignatureUseCase(sessionId, message, signature);
@@ -181,10 +208,11 @@ export function createAuthRoutes(bindingName: string) {
       // Tạo/cập nhật user
       const address = fields.address.toLowerCase();
 
-      const { token, refreshToken } = await applicationService.connectWalletUseCase(address);
+      const { token, refreshToken } = await applicationService.connectWalletUseCase(sessionId, address, ipAddress, userAgent);
 
-      setCookieWithOption(c, "token", token, 10*60);
-      setCookieWithOption(c, "refreshToken", refreshToken, 24*60*60);      
+      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
+      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);      
 
       return c.json({ ok: true });
       
@@ -194,17 +222,17 @@ export function createAuthRoutes(bindingName: string) {
       return c.json(errorResponse, status);
     }
   });
-
-  // logout
+  
+  // IV. Profile
   routes.post('/profile/logout', async (c) => {
     try {
-      const refreshToken = getCookie(c, 'refreshToken');
-      if (!refreshToken) {
-        throw new Error('Refresh token not found');
+      const sessionId = getCookie(c, 'sessionId');
+      if (!sessionId) {
+        throw new Error('Session not found');
       }
       const user = requireAuth(c);
       const applicationService = createApplicationService(c, bindingName);
-      await applicationService.logoutUseCase(user.identifier, refreshToken);
+      await applicationService.logoutUseCase(user.identifier, sessionId);
       clearAuthCookies(c);
       
       return c.json({ ok: true });
@@ -213,16 +241,16 @@ export function createAuthRoutes(bindingName: string) {
       return c.json(errorResponse, 401);
     }
   });
-  // logout all
+  
   routes.post('/profile/logoutAll', async (c) => {
     try {
-      const refreshToken = getCookie(c, 'refreshToken');
-      if (!refreshToken) {
-        throw new Error('Refresh token not found');
+      const sessionId = getCookie(c, 'sessionId');
+      if (!sessionId) {
+        throw new Error('Session not found');
       }
       const user = requireAuth(c);
       const applicationService = createApplicationService(c, bindingName);
-      await applicationService.logoutAllUseCase(user.identifier);
+      await applicationService.logoutAllUseCase(user.identifier, sessionId);
       clearAuthCookies(c);
       return c.json({ ok: true });
     } catch (e) {
@@ -231,7 +259,6 @@ export function createAuthRoutes(bindingName: string) {
     }
   });
 
-  // get user
   routes.get('/profile/me', async (c) => {
     try {
       const user = requireAuth(c);

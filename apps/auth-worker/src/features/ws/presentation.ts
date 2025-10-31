@@ -27,12 +27,11 @@ export function createWebSocketRoutes(bindingName: string) {
         throw new Error('Unauthorized');
       }
       const request = c.req.raw;
-      const data = await request.json();
       const wsApplicationService = createWebsocketApplicationService(c, bindingName);
-      return wsApplicationService.broadcastMessageUseCase(JSON.stringify(data));
+      return wsApplicationService.broadcastMessageUseCase(request);
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Failed to authenticate WebSocket");
+      const { errorResponse, status } = handleError(e, "Broadcast failed");
       return c.json(errorResponse, status);
     }
   });

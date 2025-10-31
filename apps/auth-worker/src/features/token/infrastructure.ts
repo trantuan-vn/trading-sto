@@ -6,31 +6,41 @@ import {
   ApiToken,
   CreateApiToken,
   ApiTokenUsage,
+  ApiTokenSchema,
+  ApiTokenUsageSchema,
 } from './domain';
 import { API_TOKEN_CONSTANTS } from './constants';
+import { UserDO } from '../ws/infrastructure/UserDO';
 
-export function createApiTokenService(storage: DurableObjectStorage, env: any): IApiTokenService {
-  const tokenGenerator = createTokenGenerator(env);
+// -----------------------------------------------------------------------------
+// Main Factory
+// -----------------------------------------------------------------------------
+export function createApiTokenService(userDO: UserDO): IApiTokenService {
+  const tokenGenerator = createTokenGenerator(userDO.getEnv());
   const permissionService = createPermissionService();
 
+  // Use table-based abstraction from UserDO
+  const tokenTable = userDO.table('api_tokens', ApiTokenSchema, { userScoped: true });
+  const usageTable = userDO.table('token_usage', ApiTokenUsageSchema, { userScoped: true });
+
   return {
-    // Token Management
+    // -------------------------------------------------------------------------
+    // I. TOKEN MANAGEMENT
+    // -------------------------------------------------------------------------
     async createApiToken(identifier: string, request: CreateApiToken): Promise<{ apiToken: ApiToken; rawToken: string }> {
       try {
         const rawToken = tokenGenerator.generateToken();
         const tokenHash = await tokenGenerator.hashToken(rawToken);
 
-        const expiresAt = request.expiresInDays 
+        const expiresAt = request.expiresInDays
           ? new Date(Date.now() + request.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
           : undefined;
 
-        // Các quyền mặc định cho mỗi token
-        const defaultPermissions = permissionService.createDefaultPermissions();
-
-        // Kết hợp quyền từ request (nếu có) với quyền mặc định
-        const finalPermissions = request.permissions 
-          ? [...new Set([...defaultPermissions, ...request.permissions])] 
-          : defaultPermissions;
+        // Default + custom permissions
+        const defaultPerms = permissionService.createDefaultPermissions();
+        const mergedPerms = request.permissions
+          ? [...new Set([...defaultPerms, ...request.permissions])]
+          : defaultPerms;
 
         const apiToken: ApiToken = {
           id: crypto.randomUUID(),
@@ -38,105 +48,103 @@ export function createApiTokenService(storage: DurableObjectStorage, env: any): 
           name: request.name,
           token: rawToken,
           tokenHash,
-          permissions: finalPermissions, // Sử dụng quyền đã kết hợp
+          permissions: mergedPerms,
           expiresAt,
           createdAt: new Date().toISOString(),
           isActive: true,
         };
 
-        const tokens = await getUserTokens(storage, identifier);
-        tokens.push(apiToken);
-        await storage.put(`api_tokens_${identifier}`, tokens);
-
+        await tokenTable.create(apiToken);
         return { apiToken, rawToken };
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to create API token');
         throw { errorResponse, status };
       }
     },
+
     async getUserApiTokens(identifier: string): Promise<ApiToken[]> {
       try {
-        const tokens = await getUserTokens(storage, identifier);
-        
-        return tokens.map(token => ({
-          ...token,
-          token: '***'
-        }));
+        const tokens = await tokenTable.where('identifier', '==', identifier).get();
+        return tokens.map(t => ({ ...t, token: '***' }));
       } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to get user API tokens');
+        const { errorResponse, status } = handleError(e, 'Failed to get API tokens');
         throw { errorResponse, status };
       }
     },
+
     async revokeApiToken(identifier: string, tokenId: string): Promise<void> {
       try {
-        const tokens = await getUserTokens(storage, identifier);
-        const tokenIndex = tokens.findIndex(t => t.id === tokenId);
-        
-        if (tokenIndex === -1) {
+        const token = await tokenTable.findById(tokenId);
+        if (!token || token.identifier !== identifier) {
           throw new Error('Token not found');
         }
-
-        tokens[tokenIndex].isActive = false;
-        await storage.put(`api_tokens_${identifier}`, tokens);
+        await tokenTable.update(tokenId, { isActive: false });
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to revoke API token');
         throw { errorResponse, status };
       }
     },
+
     async revokeAllApiTokens(identifier: string): Promise<void> {
       try {
-        const tokens = await getUserTokens(storage, identifier);
-        
-        for (const token of tokens) {
-          token.isActive = false;
+        const tokens = await tokenTable.where('identifier', '==', identifier).get();
+        for (const t of tokens) {
+          await tokenTable.update(t.id, { isActive: false });
         }
-        await storage.put(`api_tokens_${identifier}`, tokens);
-
       } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to revoke all API tokens');
+        const { errorResponse, status } = handleError(e, 'Failed to revoke all tokens');
         throw { errorResponse, status };
       }
     },
 
+    // -------------------------------------------------------------------------
+    // II. VALIDATION
+    // -------------------------------------------------------------------------
     async validateApiToken(token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }> {
       try {
-        const allTokens = await getAllTokens(storage);
-        
+        const allTokens = await tokenTable.getAll();
+
         for (const apiToken of allTokens) {
           const isValid = await tokenGenerator.verifyToken(token, apiToken.tokenHash);
-          
           if (isValid) {
-            if (!apiToken.isActive) {
-              return { isValid: false, error: 'Token revoked' };
-            }
-
-            if (apiToken.expiresAt && new Date(apiToken.expiresAt) < new Date()) {
+            if (!apiToken.isActive) return { isValid: false, error: 'Token revoked' };
+            if (apiToken.expiresAt && new Date(apiToken.expiresAt) < new Date())
               return { isValid: false, error: 'Token expired' };
-            }
 
-            await updateLastUsed(storage, apiToken.id);
-            
+            await tokenTable.update(apiToken.id, { lastUsed: new Date().toISOString() });
             return { isValid: true, token: apiToken };
           }
         }
 
         return { isValid: false, error: 'Invalid token' };
       } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Token validation failed');
+        const { errorResponse } = handleError(e, 'Token validation failed');
         return { isValid: false, error: errorResponse.error };
       }
     },
 
+    // -------------------------------------------------------------------------
+    // III. USAGE RECORDS
+    // -------------------------------------------------------------------------
     async recordTokenUsage(usage: ApiTokenUsage): Promise<void> {
       try {
-        const usages = await storage.get<ApiTokenUsage[]>(`token_usage_${usage.tokenId}`) || [];
-        usages.push(usage);
-        
-        if (usages.length > API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS) {
-          usages.splice(0, usages.length - API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS);
+        const newUsage = {
+          ...usage,
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+        };
+        await usageTable.create(newUsage);
+
+        // Optional cleanup
+        const all = await usageTable
+          .where('tokenId', '==', usage.tokenId)
+          .orderBy('timestamp', 'desc')
+          .get();
+
+        if (all.length > API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS) {
+          const extra = all.slice(API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS);
+          for (const old of extra) await usageTable.delete(old.id);
         }
-        
-        await storage.put(`token_usage_${usage.tokenId}`, usages);
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to record token usage');
         throw { errorResponse, status };
@@ -145,17 +153,20 @@ export function createApiTokenService(storage: DurableObjectStorage, env: any): 
 
     async getTokenUsage(tokenId: string, days: number = 30): Promise<ApiTokenUsage[]> {
       try {
-        const usages = await storage.get<ApiTokenUsage[]>(`token_usage_${tokenId}`) || [];
-        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        return usages.filter(usage => new Date(usage.timestamp) >= cutoffDate);
+        const usages = await usageTable.where('tokenId', '==', tokenId).get();
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        return usages.filter(u => new Date(u.timestamp) >= cutoff);
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to get token usage');
         throw { errorResponse, status };
       }
-    }
+    },
   };
 }
 
+// -----------------------------------------------------------------------------
+// Helpers: Token generator & permissions
+// -----------------------------------------------------------------------------
 export function createTokenGenerator(env: any): ITokenGenerator {
   return {
     generateToken(): string {
@@ -165,8 +176,7 @@ export function createTokenGenerator(env: any): ITokenGenerator {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=/g, '');
-      
-      return `utk_${token}`;
+      return `${API_TOKEN_CONSTANTS.TOKEN_PREFIX}${token}`;
     },
 
     async hashToken(token: string): Promise<string> {
@@ -178,87 +188,34 @@ export function createTokenGenerator(env: any): ITokenGenerator {
     },
 
     async verifyToken(token: string, hash: string): Promise<boolean> {
-      const computedHash = await this.hashToken(token);
-      return computedHash === hash;
-    }
+      const computed = await this.hashToken(token);
+      return computed === hash;
+    },
   };
 }
 
 export function createPermissionService(): IPermissionService {
-  const availablePermissions = [
+  const available = [
     'read:profile',
     'write:profile',
     'read:tokens',
     'write:tokens',
-    'admin:all'
+    'ekyc:document:recognize',
+    'ekyc:face:verify',
+    'ekyc:face:liveness',
+    'admin:all',
   ];
 
   return {
-    validatePermissions(requiredPermissions: string[], userPermissions: string[]): boolean {
-      if (userPermissions.includes('admin:all')) {
-        return true;
-      }
-
-      return requiredPermissions.every(permission => 
-        userPermissions.includes(permission)
-      );
+    validatePermissions(required: string[], userPerms: string[]): boolean {
+      if (userPerms.includes('admin:all')) return true;
+      return required.every(p => userPerms.includes(p));
     },
-
     getAvailablePermissions(): string[] {
-      return [...availablePermissions];
+      return [...available];
     },
     createDefaultPermissions(): string[] {
       return ['read:profile'];
-    }
+    },
   };
-}
-
-// Private helper functions
-async function getUserTokens(storage: DurableObjectStorage, userId: string): Promise<ApiToken[]> {
-  return await storage.get<ApiToken[]>(`api_tokens_${userId}`) || [];
-}
-
-async function getAllTokens(storage: DurableObjectStorage): Promise<ApiToken[]> {
-  const keys = await storage.list({ prefix: 'api_tokens_' });
-  const allTokens: ApiToken[] = [];
-  
-  for (const value of keys.values()) {
-    if (Array.isArray(value)) {
-      allTokens.push(...value);
-    }
-  }
-  
-  return allTokens;
-}
-
-async function updateLastUsed(storage: DurableObjectStorage, tokenId: string): Promise<void> {
-  try {
-    const allTokens = await getAllTokens(storage);
-    let updated = false;
-    
-    for (const token of allTokens) {
-      if (token.id === tokenId) {
-        token.lastUsed = new Date().toISOString();
-        updated = true;
-        break;
-      }
-    }
-    
-    if (updated) {
-      const userTokensMap = new Map<string, ApiToken[]>();
-      
-      for (const token of allTokens) {
-        if (!userTokensMap.has(token.identifier)) {
-          userTokensMap.set(token.identifier, []);
-        }
-        userTokensMap.get(token.identifier)!.push(token);
-      }
-      
-      for (const [userId, tokens] of userTokensMap) {
-        await storage.put(`api_tokens_${userId}`, tokens);
-      }
-    }
-  } catch (error) {
-    console.error('Failed to update last used timestamp:', error);
-  }
 }

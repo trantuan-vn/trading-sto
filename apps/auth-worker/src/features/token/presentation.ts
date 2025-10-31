@@ -35,15 +35,6 @@ export function createTokenRoutes(bindingName: string) {
       return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 400);
     }
   });
-  app.post('/check-permission', async (c) => {
-    try {
-      const { permissions } = await c.req.json();
-      const token = requirePermissions(c, permissions);
-      return c.json({ isValid: true });
-    } catch (error) {
-      return c.json({ isValid: false, error: error instanceof Error ? error.message : 'Unknown error' }, 400);
-    }
-  });
   // Revoke specific API token
   app.delete('/revoke/:tokenId', async (c) => {
     try {

@@ -12,12 +12,10 @@ export const ERROR_MESSAGES = {
 // Authentication Constants
 export const AUTH_CONSTANTS = {
   RESERVED_PREFIX: "__",
-  AUTH_DATA_KEY: "__user",
-  RATE_LIMIT_KEY: "__rl",
   RATE_LIMIT_MAX: 5,
   RATE_LIMIT_WINDOW: 60_000, // 1 minute
-  OTP_EXPIRY: 10 * 60 * 1000, // 10 minutes
-  ACCESS_TOKEN_EXPIRY: 15 * 60, // 15 minutes
-  REFRESH_TOKEN_EXPIRY: 7 * 24 * 60 * 60, // 7 days
+  ACCESS_TOKEN_EXPIRY: 3 * 60, // 3 minutes
+  REFRESH_TOKEN_EXPIRY: 15 * 60, // 15 minutes
+  SESSION_EXPIRY: 30 * 60, // 30 minutes
   NONCE_EXPIRY: 5 * 60 // 5 minutes
 };

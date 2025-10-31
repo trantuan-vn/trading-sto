@@ -18,7 +18,7 @@ export class GenericQuery<T> {
     return this.getOrganizationContext();
   }
 
-  where(path: string, operator: '==' | '!=' | '>' | '<' | 'includes', value: any): this {
+  where(path: string, operator: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'includes', value: any): this {
     this.conditions.push({ path, operator, value });
     return this;
   }
@@ -67,6 +67,12 @@ export class GenericQuery<T> {
           case '<':
             params.push(c.value);
             return `json_extract(data, '${jsonPath}') < ?`;
+          case '>=':
+            params.push(c.value);
+            return `json_extract(data, '${jsonPath}') >= ?`;
+          case '<=':
+            params.push(c.value);
+            return `json_extract(data, '${jsonPath}') <= ?`;
           case 'includes':
             params.push(`%${c.value}%`);
             return `json_extract(data, '${jsonPath}') LIKE ?`;
@@ -146,6 +152,12 @@ export class GenericQuery<T> {
           case '<':
             params.push(c.value);
             return `json_extract(data, '${jsonPath}') < ?`;
+          case '>=':
+            params.push(c.value);
+            return `json_extract(data, '${jsonPath}') >= ?`;
+          case '<=':
+            params.push(c.value);
+            return `json_extract(data, '${jsonPath}') <= ?`;
           case 'includes':
             params.push(`%${c.value}%`);
             return `json_extract(data, '${jsonPath}') LIKE ?`;

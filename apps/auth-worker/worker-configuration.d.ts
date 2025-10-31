@@ -23,12 +23,13 @@ declare namespace Cloudflare {
         TWITTER_CLIENT_SECRET: string;
         FRONTEND_URL: string;
         BASE_URL: string;        
-		BROADCAST_SERVICE_DO: DurableObjectNamespace<import("./src/shared/infrastructure/BroadcastServiceDO").BroadcastServiceDO>;
-        USER_SHARD_DO: DurableObjectNamespace<import("./src/shared/infrastructure/UserShardDO").UserShardDO>;
-        USER_DO: DurableObjectNamespace<import("./src/shared/infrastructure/UserDO").UserDO>;
+		BROADCAST_SERVICE_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/BroadcastServiceDO").BroadcastServiceDO>;
+        USER_SHARD_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/UserShardDO").UserShardDO>;
+        USER_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/UserDO").UserDO>;
 		ASSETS: Fetcher;
         NONCE_KV: KVNamespace;
         DEBUG: string;
+        AI: Ai;
 	}
 }
 interface Env extends Cloudflare.Env {}

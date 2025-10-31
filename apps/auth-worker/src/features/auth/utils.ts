@@ -4,12 +4,9 @@ import CryptoJS from 'crypto-js';
 import { Context } from 'hono'
 import { setCookie, deleteCookie } from 'hono/cookie'
 
-import { handleError } from '../../shared/utils';
+import { OAuthConfig, OAuthProvider, GoogleUserInfo, AppleUserInfo, FacebookUserInfo, GitHubUserInfo, TwitterUserInfo } from './domain'
 
-import { OAuthConfig, OAuthProvider, OAuthTokenResponse, OAuthTokenResponseSchema, 
-  GoogleUserInfoSchema, AppleUserInfoSchema, FacebookUserInfoSchema, GitHubUserInfoSchema, TwitterUserInfoSchema,
-  GoogleUserInfo, AppleUserInfo, FacebookUserInfo, GitHubUserInfo, TwitterUserInfo } from './domain'
-
+import { AUTH_CONSTANTS } from './constants';
 
 // I. JWT
 // JWT payload type matching the UserDO internal implementation
@@ -89,10 +86,10 @@ export async function generateAccessToken(
   userId: string, 
   identifier: string, 
   secret: string, 
-  expiresInMinutes: number = 15
+  expiresInMinutes: number = AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY
 ): Promise<string> {
   const iat = Math.floor(Date.now() / 1000);
-  const exp = Math.floor(Date.now() / 1000) + expiresInMinutes * 60;
+  const exp = Math.floor(Date.now() / 1000) + expiresInMinutes;
   return await signJWT({
     sub: userId,
     identifier: identifier.toLowerCase(),
@@ -114,10 +111,10 @@ export async function generateRefreshToken(
   userId: string,
   identifier: string, 
   secret: string,
-  expiresInDays: number = 1
+  expiresInMinutes: number = AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY
 ): Promise<string> {
   const iat = Math.floor(Date.now() / 1000);
-  const exp = Math.floor(Date.now() / 1000) + expiresInDays * 24 * 60 * 60;
+  const exp = Math.floor(Date.now() / 1000) + expiresInMinutes;
   return await signJWT({
     sub: userId,
     identifier: identifier.toLowerCase(),
@@ -208,11 +205,35 @@ export async function generateWallet(encryptionSecret: string): Promise<{
     mnemonicPhrase: encryptedMnemonic
   };
 }
+// IV. OAUTH
 
-// IV. COOKIES
+export const getSessionIdHash = (ipAddress: string, userAgent: string, secret: string) => {
+  const data = `${ipAddress}|${userAgent}|${secret}`;
+  return CryptoJS.SHA256(data).toString(CryptoJS.enc.Hex);
+}
+
+export const validateSession = ( session: any, token?: string, refreshToken?: string): void => {
+  if (!session || !session.isActive) {
+    throw new Error('Invalid session');
+  }
+  
+  if (new Date(session.expiresAt) < new Date()) {
+    throw new Error('Session expired');
+  }
+  
+  if (token && session.token !== token) {
+    throw new Error('Invalid token');
+  }
+  
+  if (refreshToken && session.refreshToken !== refreshToken) {
+    throw new Error('Invalid refresh token');
+  }
+}
+
+// V. COOKIES
 export const setCookieWithOption = (c: Context, name: string, value: string, maxAge: number) => {
   const cookieOptions = {
-    sameSite: 'none' as const, 
+    sameSite: 'strict' as const, 
     httpOnly: true,
     secure: true,
     path: '/',

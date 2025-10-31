@@ -112,54 +112,69 @@ export type TwitterUserInfo = z.infer<typeof TwitterUserInfoSchema>;
 // Base schemas
 export const BaseUserSchema = z.object({
   id: z.string(),
-  identifier: z.string(),
+  identifier: z.string(), 
+  role: z.enum(['member', 'admin']).default('member'),
   createdAt: z.string(),
-  refreshTokens: z.array(z.string()).default([]),
 });
 
 export type BaseUser = z.infer<typeof BaseUserSchema>;
 
 // User Schema
 export const UserSchema = BaseUserSchema.extend({
-  identifier: z.string(),
   address: z.string().optional(),
   email: z.string().optional(),
   phone: z.string().optional(),
   privateKey: z.string().optional(),
   mnemonicPhrase: z.string().optional(),
-  oauthData: z.record(OAuthProviderDataSchema).optional(),
 });
 
 export type User = z.infer<typeof UserSchema>;
 
+// Session Schema
+export const SessionSchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum(['otp', 'siwe', 'oauth']), 
+  token: z.string().optional(),
+  refreshToken: z.string().optional(),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+  ipAddress: z.string().optional(),
+  userAgent: z.string().optional(),
+  isActive: z.boolean().default(true),
+});
+
+export type Session = z.infer<typeof SessionSchema>;
+
 // VI. INTERFACE
 
 export interface IUserRepository {
-  get(): Promise<User | undefined>;
+  get(): Promise<User | null>;
   save(user: User): Promise<void>;
   delete(): Promise<void>;
 }
 
 export interface IOTPService {
-  generateOTP(): Promise<{ otp: string; sessionId: string }>;
+  generateOTP(sessionId: string): Promise<string>;
   verifyOTP(otp: string, sessionId: string): Promise<boolean>;
   sendEmailOTP(email: string, otp: string): Promise<void>;
   sendSmsOTP(phone: string, otp: string, provider: string): Promise<void>;
 }
 
 export interface IWalletService {
-  generateNonceAndStore(): Promise<{ nonce: string; sessionId: string }>;
+  generateNonceAndStore(sessionId: string): Promise<string>;
   verifySignature(sessionId: string, address: string, signature: string ): Promise<SiweMessage>;
 }
 
 export interface IOAuthService {
-  generateState(): Promise<{ state: string; sessionId: string }>;
+  generateState(sessionId: string): Promise<string>;
   exchangeOAuthCode(provider: string, sessionId: string, state: string, code: string ): Promise<OAuthTokenResponse>;
   getUserInfoFromProvider(provider: string, accessToken: string): Promise<any>;
 }
 
-export interface IRateLimitService {
-  checkRateLimit(): Promise<void>;
+export interface IKvService {
+  checkRateLimit(sessionId: string): Promise<void>;
+  saveNonce(sessionId: string, nonce: string): Promise<void>;
+  validateNonce(sessionId: string, nonce: string): Promise<boolean>
 }
 
 
