@@ -36,7 +36,6 @@ export const BatchMetricsSchema = z.object({
 
 // Cleanup and Maintenance
 export const CleanupOperationSchema = z.object({
-  operationId: z.string().uuid(),
   shardName: z.string(),
   timestamp: z.number().int().positive(),
   inactiveUserIds: z.array(z.string()),

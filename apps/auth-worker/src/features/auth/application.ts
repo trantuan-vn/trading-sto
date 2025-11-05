@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getDO, isAdmin } from '../../shared/utils';
+import { getIdFromName, isAdmin } from '../../shared/utils';
 import { UserDO } from '../ws/infrastructure/UserDO';
 import { SiweMessage } from 'siwe';
 
@@ -71,9 +71,9 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       return await oauthService.getUserInfoFromProvider(provider, tokenData.access_token);      
     },
     async connectOAuthUseCase(sessionId: string, identifier: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
-      let user: User | null;
+      let user: any;
       
-      const userDO = getDO<UserDO>(c, identifier, bindingName); 
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName); 
       const repository = createRepository(userDO);
 
       try {
@@ -85,30 +85,27 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         // User doesn't exist, create new one
         const wallet = await generateWallet(c.env.ENCRYPTION_SECRET);
         user = {
-          id: userDO.getCurrentUserId(),
           identifier,
           role: isAdmin(identifier) ? 'admin' : 'member',
           address: wallet.address,
           privateKey: wallet.privateKey,
           mnemonicPhrase: wallet.mnemonicPhrase,
-          createdAt: new Date().toISOString(),
         };
         // Update email
         if (isValidEmail(identifier)) {
           user.email = identifier;
         } 
         // Save user data
-        await repository.users.save(user);
+        user = await repository.users.save(user);
       }
       // Generate tokens
       const token = await generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
       const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
 
       const sessionData: Session = {
-        id: sessionId,
+        hashSessionId: sessionId,
         type: 'oauth',
         expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        createdAt: new Date().toISOString(),
         token,
         refreshToken,
         ipAddress,
@@ -146,9 +143,9 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         throw new Error('Invalid OTP');
       }
       const nIdentifier= normalizeIdentifier(identifier);
-      const userDO = getDO<UserDO>(c, nIdentifier, bindingName);
+      const userDO = getIdFromName<UserDO>(c, nIdentifier, bindingName);
       const repository = createRepository(userDO);   
-      let user: User | null;
+      let user: any;
       try {
         user = await repository.users.get();
         if (!user) throw new Error('User not found');
@@ -156,13 +153,11 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         // User doesn't exist, create new one
         const wallet = await generateWallet(c.env.ENCRYPTION_SECRET);
         user = {
-          id: userDO.getCurrentUserId(),
           identifier: nIdentifier,
           role: isAdmin(nIdentifier) ? 'admin' : 'member',
           address: wallet.address,
           privateKey: wallet.privateKey,
           mnemonicPhrase: wallet.mnemonicPhrase,
-          createdAt: new Date().toISOString(),
           }
       }
       // Update email
@@ -181,10 +176,9 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);      
 
       const sessionData: Session = {
-        id: sessionId,
+        hashSessionId: sessionId,
         type: 'otp',
         expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        createdAt: new Date().toISOString(),
         token,
         refreshToken,
         ipAddress,
@@ -209,20 +203,18 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       return await walletService.verifySignature(sessionId, message, signature);
     },
     async connectWalletUseCase(sessionId: string, address: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
-      const userDO = getDO<UserDO>(c, address, bindingName); 
+      const userDO = getIdFromName<UserDO>(c, address, bindingName); 
       const repository = createRepository(userDO);
       // Try to get existing user
-      let user: User | null;
+      let user: any;
       try {
         user = await repository.users.get();
         if (!user) throw new Error('User not found');
       } catch (error) {
         user = {
-            id: userDO.getCurrentUserId(),
             identifier: address,
             role: isAdmin(address) ? 'admin' : 'member',
             address: address,
-            createdAt: new Date().toISOString(),            
         };
       }
       // Save user data
@@ -232,10 +224,9 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
 
       const sessionData: Session = {
-        id: sessionId,
+        hashSessionId: sessionId,
         type: 'siwe',
         expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        createdAt: new Date().toISOString(),
         token,
         refreshToken,
         ipAddress,
@@ -250,14 +241,14 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     async logoutUseCase(identifier: string, sessionId: string): Promise<void> {
       const kvService = createKvService(c.env);      
       await kvService.checkRateLimit(sessionId);
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       await repository.sessions.update(sessionId, { isActive: false });
     },
     async logoutAllUseCase(identifier: string, sessionId: string): Promise<void>{
       const kvService = createKvService(c.env);      
       await kvService.checkRateLimit(sessionId);
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       await repository.sessions.deactivateAllUserSessions(userDO.getCurrentUserId());
     },
@@ -277,7 +268,7 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         throw new Error('Invalid identifier');
       }
 
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       
       // Get user and validate
@@ -311,7 +302,7 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         throw new Error('Invalid identifier');
       }
 
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       
       // Get user and validate

@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 
 import { UserDODatabase, TableOptions } from '../../../shared/database/index.js';
-import { handleError } from '../../../shared/utils.js';
+import { handleError, getIPAndUserAgent, getSessionIdHash } from '../../../shared/utils.js';
 
 import { 
   ConnectionSchema, 
@@ -14,8 +14,7 @@ import {
   BroadcastValidator,
   WebSocketMessageSchema,
   DEFAULT_SCALE_CONFIGS,
-  ScaleConfig,
-  ScaleConfigName
+  ScaleConfig
 } from '../domain.js';
 
 const MAX_SEND_FAILURE_COUNT = 3;
@@ -124,47 +123,38 @@ export class UserDO extends DurableObject {
   // V. INTERNAL MESSAGE HANDLER
   // =============================================
   private async handleInternalMessage(request: Request): Promise<Response> {
-    try {
-      // Ép kiểu rõ ràng cho dữ liệu JSON
-      const message = await request.json() as {
-        type: string;
-        [key: string]: any;
-      };
-      
-      switch (message.type) {
-        case 'broadcast':
-          // QUAN TRỌNG: xử lý broadcast ngay lập tức với message data đầy đủ
-          await this.handleDirectBroadcastWithMessage(message);
-          break;
-        case 'heartbeat':
-          await this.sendHeartbeat();
-          break;
-        default:
-          return this.createErrorResponse('INVALID_MESSAGE_TYPE', 'Unknown message type');
-      }
-      
-      return new Response(JSON.stringify({ status: 'processed' }));
-    } catch (error) {
-      return this.createErrorResponse('INTERNAL_ERROR', 'Internal message processing failed');
+    // Ép kiểu rõ ràng cho dữ liệu JSON
+    const message = await request.json() as {
+      type: string;
+      [key: string]: any;
+    };
+    
+    switch (message.type) {
+      case 'broadcast':
+        // QUAN TRỌNG: xử lý broadcast ngay lập tức với message data đầy đủ
+        await this.handleDirectBroadcastWithMessage(message);
+        break;
+      case 'heartbeat':
+        await this.sendHeartbeat();
+        break;
+      default:
+        throw new Error(`Unknown message type: ${message.type}`);
     }
+    
+    return new Response(JSON.stringify({ status: 'processed' }));
   }
 
   // PHƯƠNG THỨC MỚI: Xử lý broadcast trực tiếp với full message
   private async handleDirectBroadcastWithMessage(message: any) {
-    const { broadcastId, message: messageContent, timestamp } = message;
+    const { broadcastId, message: messageContent } = message;
     
-    try {
-      console.log(`📨 UserDO ${this.getCurrentUserId()} received broadcast: ${broadcastId}`);
-      
-      // Gửi ngay lập tức qua WebSocket - KHÔNG CẦN GỌI NGƯỢC SERVICE
-      await this.broadcast("broadcast", messageContent);
-      
-      // Ghi nhận delivery local (không blocking)
-      this.state.waitUntil(this.recordLocalDelivery(broadcastId));
-      
-    } catch (error) {
-      console.error(`Direct broadcast with message failed for ${broadcastId}:`, error);
-    }
+    console.log(`📨 UserDO ${this.getCurrentUserId()} received broadcast: ${broadcastId}`);
+    
+    // Gửi ngay lập tức qua WebSocket - KHÔNG CẦN GỌI NGƯỢC SERVICE
+    await this.broadcast("broadcast", messageContent);
+    
+    // Ghi nhận delivery local (không blocking)
+    this.state.waitUntil(this.recordLocalDelivery(broadcastId));      
   }
 
   // PHƯƠNG THỨC MỚI: Ghi nhận delivery local
@@ -182,30 +172,25 @@ export class UserDO extends DurableObject {
 
   // PHƯƠNG THỨC MỚI: Báo cáo delivery count về shard
   private async reportDeliveryToShard(broadcastId: string, deliveredCount: number) {
-    try {
-      const shardName = this.getShardForUser(this.getCurrentUserId());
-      const shardDO = this.env.USER_SHARD_DO.get(
-        this.env.USER_SHARD_DO.idFromName(shardName)
-      );
-      
-      await shardDO.fetch('https://shard.internal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'user_delivery_report',
-          broadcastId,
-          deliveredCount,
-          userId: this.getCurrentUserId(),
-          timestamp: Date.now()
-        })
-      });
-      
-      // Reset counter sau khi báo cáo
-      await this.storage.delete(`user_delivery_${broadcastId}`);
-      
-    } catch (error) {
-      console.warn(`Failed to report delivery to shard for broadcast ${broadcastId}:`, error);
-    }
+    const shardName = this.getShardForUser(this.getCurrentUserId());
+    const shardDO = this.env.USER_SHARD_DO.get(
+      this.env.USER_SHARD_DO.idFromName(shardName)
+    );
+    
+    await shardDO.fetch('https://shard.internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'user_delivery_report',
+        broadcastId,
+        deliveredCount,
+        userId: this.getCurrentUserId(),
+        timestamp: Date.now()
+      })
+    });
+    
+    // Reset counter sau khi báo cáo
+    await this.storage.delete(`user_delivery_${broadcastId}`);    
   }
 
   // PHƯƠNG THỨC MỚI: Lấy shard name cho user
@@ -233,14 +218,16 @@ export class UserDO extends DurableObject {
     const [client, server] = Object.values(webSocketPair);
     
     // Store connection info using table
+    const { ipAddress, userAgent } = getIPAndUserAgent(request);
+    if (!ipAddress || !userAgent) {
+      throw new Error('Missing IP address or user agent');
+    }
+    const sessionId = getSessionIdHash(ipAddress, userAgent, this.env.ENCRYPTION_SECRET);
+
     const connectionData: Connection = ConnectionSchema.parse({
-      id: crypto.randomUUID(),
       connected: true,
       lastConnected: Date.now(),
-      userAgent: request.headers.get('User-Agent') || undefined,
-      ipAddress: request.headers.get('CF-Connecting-IP') || undefined,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
+      sessionId,
     });
 
     await this.connections.create(connectionData);
@@ -282,10 +269,7 @@ export class UserDO extends DurableObject {
       console.log(`Processed message for user ${this.getCurrentUserId()}:`, parsed);
     } catch (e) {
       handleError(e, `Processing message error: ${message}`);
-      await this.sendMessage(ws, { 
-        type: 'error', 
-        message: 'Invalid message format' 
-      });
+      await this.sendMessage(ws, { type: 'error', message: 'Invalid message format' });
     }
   }
 
@@ -410,11 +394,10 @@ export class UserDO extends DurableObject {
       this.sendFailureCount.set(ws, 0);
       
       return true;
-      
     } catch (error) {
       await this.handleSendError(ws, error, message);
       return false;
-    }
+    }    
   }
 
   private async handleSendError(ws: WebSocket, error: any, message: any): Promise<void> {
@@ -449,40 +432,27 @@ export class UserDO extends DurableObject {
   }
 
   private async storePendingMessage(message: any) {
-    const pendingMessages = await this.pendingMessages.getAll();
     
     const pendingMessage: PendingMessage = PendingMessageSchema.parse({
-      id: crypto.randomUUID(),
       message: BroadcastValidator.sanitizeBroadcastMessage(message),
       type: message.type || 'unknown',
       priority: 'medium',
       attempts: 0,
       maxAttempts: 3,
-      createdAt: Date.now(),
       scheduledFor: Date.now()
     });
 
     await this.pendingMessages.create(pendingMessage);
     
-    // Keep only last 100 messages - delete oldest if needed
-    if (pendingMessages.length >= 100) {
-      const oldestMessages = pendingMessages
-        .sort((a, b) => a.createdAt - b.createdAt)
-        .slice(0, pendingMessages.length - 99);
-      
-      for (const oldMessage of oldestMessages) {
-        await this.pendingMessages.delete(oldMessage.id);
-      }
-    }
   }
 
   private async sendPendingMessages(ws: WebSocket) {
     if (ws.readyState !== WebSocket.OPEN) {
-      return;
+      throw new Error('WebSocket is not open');
     }
 
     const pendingMessages = await this.pendingMessages.getAll();
-    const successfulSends: PendingMessage[] = [];
+    const successfulSends: any[] = [];
 
     for (const pendingMessage of pendingMessages) {
       if (await this.sendMessage(ws, pendingMessage.message)) {
@@ -612,21 +582,6 @@ export class UserDO extends DurableObject {
   async getSubscriptionList(): Promise<Response> {
     const subscriptions = await this.getSubscriptions();
     return new Response(JSON.stringify({ subscriptions }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  }
-
-  // =============================================
-  // XIII. UTILITY METHODS
-  // =============================================
-  private createErrorResponse(code: string, message: string): Response {
-    return new Response(JSON.stringify({
-      error: message,
-      code,
-      timestamp: Date.now()
-    }), {
-      status: code === 'NOT_FOUND' ? 404 : 
-              code === 'VALIDATION_ERROR' ? 400 : 500,
       headers: { 'Content-Type': 'application/json' }
     });
   }

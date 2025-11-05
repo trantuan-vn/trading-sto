@@ -1,4 +1,5 @@
 import { handleError } from '../../shared/utils';
+import { UserDO } from '../ws/infrastructure/UserDO';
 import { 
   IVNPayService, 
   IPaymentRepository, 
@@ -18,9 +19,9 @@ import { sortObjectUtil, getResponseMessage } from './utils';
 import moment from 'moment';
 import crypto from 'crypto';
 
-export function createVNPayService(storage: DurableObjectStorage, env: any): IVNPayService {
+export function createVNPayService(userDO: UserDO): IVNPayService {
   const cryptoService = createCryptoService();
-  const paymentRepo = createPaymentRepository(storage);
+  const paymentRepo = createPaymentRepository(userDO);
 
   return {
     async createPaymentUrl(request: CreatePayment, ipAddr: string): Promise<PaymentUrlResult> {
@@ -313,12 +314,12 @@ export function createCryptoService(): ICryptoService {
   };
 }
 
-export function createPaymentRepository(storage: DurableObjectStorage): IPaymentRepository {
+export function createPaymentRepository(userDO: UserDO): IPaymentRepository {
   return {
     async findOrderById(orderId: string): Promise<{ exists: boolean; amount?: number; status?: string }> {
       try {
         // Implementation to find order in database
-        const order = await storage.get(`order_${orderId}`) as any;
+        const order = await userDO.getStorage().get(`order_${orderId}`) as any;
         
         if (!order) {
           return { exists: false };
@@ -337,12 +338,12 @@ export function createPaymentRepository(storage: DurableObjectStorage): IPayment
 
     async updatePaymentStatus(orderId: string, status: string, transactionData: any): Promise<void> {
       try {
-        const order = await storage.get(`order_${orderId}`) || {} as any;
+        const order = await userDO.getStorage().get(`order_${orderId}`) || {} as any;
         order.status = status;
         order.transactionData = transactionData;
         order.updatedAt = new Date().toISOString();
         
-        await storage.put(`order_${orderId}`, order);
+        await userDO.getStorage().put(`order_${orderId}`, order);
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to update payment status');
         throw { errorResponse, status };
@@ -355,7 +356,7 @@ export function createPaymentRepository(storage: DurableObjectStorage): IPayment
         refundData.id = refundId;
         refundData.createdAt = new Date().toISOString();
         
-        await storage.put(`refund_${refundId}`, refundData);
+        await userDO.getStorage().put(`refund_${refundId}`, refundData);
         return refundId;
       } catch (e) {
         const { errorResponse, status } = handleError(e, 'Failed to create refund record');

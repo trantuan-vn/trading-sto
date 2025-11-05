@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { createTokenApplicationService } from './application';
-import { CreateApiTokenSchema, RevokeApiTokenSchema, ValidateApiTokenSchema } from './domain';
+import { CreateApiTokenSchema, RevokeApiTokenSchema } from './domain';
 import { requireAuth } from '../auth/authMiddleware';
-import { requirePermissions } from './authMiddleware';
+import { handleError } from '../../shared/utils';
 
 export function createTokenRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();
@@ -18,9 +18,8 @@ export function createTokenRoutes(bindingName: string) {
       const result = await tokenService.createApiTokenUseCase(user.identifier, request);
       return c.json(result);
     } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, 400);
+      const { errorResponse, status } = handleError(error, 'Failed to create API token');
+      return c.json(errorResponse, status);
     }
   });
 
@@ -32,7 +31,8 @@ export function createTokenRoutes(bindingName: string) {
       const result = await tokenService.getUserApiTokensUseCase(user.identifier);
       return c.json(result);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : 'Unknown error' }, 400);
+      const { errorResponse, status } = handleError(error, 'Failed to get API tokens');
+      return c.json(errorResponse, status);
     }
   });
   // Revoke specific API token
@@ -41,14 +41,12 @@ export function createTokenRoutes(bindingName: string) {
       const user = requireAuth(c);
       const tokenId = c.req.param('tokenId');
       const request = RevokeApiTokenSchema.parse({ tokenId });
-      
       const tokenService = createTokenApplicationService(c, bindingName);
       const result = await tokenService.revokeApiTokenUseCase(user.identifier, request);
       return c.json(result);
     } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, 400);
+      const { errorResponse, status } = handleError(error, 'Failed to revoke API token');
+      return c.json(errorResponse, status);
     }
   });
   // Revoke all API tokens
@@ -59,42 +57,11 @@ export function createTokenRoutes(bindingName: string) {
       const result = await tokenService.revokeAllApiTokensUseCase(user.identifier);
       return c.json(result);
     } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, 400);
+      const { errorResponse, status } = handleError(error, 'Failed to revoke all API tokens');
+      return c.json(errorResponse, status);
     }
   });
   
-  // Record token usage
-  app.post('/usage', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const body = await c.req.json();
-      const tokenService = createTokenApplicationService(c, bindingName);
-      await tokenService.recordTokenUsageUseCase(user.identifier, body);
-      return c.json({ success: true });
-    } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, 400);
-    }
-  });
-
-  // Get token usage statistics
-  app.get('/usage/:tokenId', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const tokenId = c.req.param('tokenId');
-      const days = c.req.query('days') ? parseInt(c.req.query('days')!) : 30;
-      const tokenService = createTokenApplicationService(c, bindingName);
-      const result = await tokenService.getTokenUsageUseCase(user.identifier, tokenId, days);
-      return c.json(result);
-    } catch (error) {
-      return c.json({ 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, 400);
-    }
-  });
 
   return app;
 }

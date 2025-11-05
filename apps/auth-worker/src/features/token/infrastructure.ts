@@ -1,15 +1,13 @@
-import { handleError } from '../../shared/utils';
 import { 
   IApiTokenService,
   ITokenGenerator,
   IPermissionService,
   ApiToken,
   CreateApiToken,
-  ApiTokenUsage,
   ApiTokenSchema,
-  ApiTokenUsageSchema,
+  IKvService
 } from './domain';
-import { API_TOKEN_CONSTANTS } from './constants';
+import { API_TOKEN_CONSTANTS, AUTH_CONSTANTS, DEFAULT_PERMISSIONS } from './constants';
 import { UserDO } from '../ws/infrastructure/UserDO';
 
 // -----------------------------------------------------------------------------
@@ -21,79 +19,54 @@ export function createApiTokenService(userDO: UserDO): IApiTokenService {
 
   // Use table-based abstraction from UserDO
   const tokenTable = userDO.table('api_tokens', ApiTokenSchema, { userScoped: true });
-  const usageTable = userDO.table('token_usage', ApiTokenUsageSchema, { userScoped: true });
 
   return {
     // -------------------------------------------------------------------------
     // I. TOKEN MANAGEMENT
     // -------------------------------------------------------------------------
-    async createApiToken(identifier: string, request: CreateApiToken): Promise<{ apiToken: ApiToken; rawToken: string }> {
-      try {
-        const rawToken = tokenGenerator.generateToken();
-        const tokenHash = await tokenGenerator.hashToken(rawToken);
+    async createApiToken(identifier: string, request: CreateApiToken): Promise<{apiToken: any, rawToken: string}> {
+      const rawToken = tokenGenerator.generateToken();
+      const tokenHash = await tokenGenerator.hashToken(rawToken);
 
-        const expiresAt = request.expiresInDays
-          ? new Date(Date.now() + request.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
-          : undefined;
+      const expiresAt = request.expiresInDays
+        ? new Date(Date.now() + request.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
+        : undefined;
 
-        // Default + custom permissions
-        const defaultPerms = permissionService.createDefaultPermissions();
-        const mergedPerms = request.permissions
-          ? [...new Set([...defaultPerms, ...request.permissions])]
-          : defaultPerms;
+      // Default + custom permissions
+      const defaultPerms = permissionService.createDefaultPermissions();
+      const mergedPerms = request.permissions
+        ? [...new Set([...defaultPerms, ...request.permissions])]
+        : defaultPerms;
 
-        const apiToken: ApiToken = {
-          id: crypto.randomUUID(),
-          identifier,
-          name: request.name,
-          token: rawToken,
-          tokenHash,
-          permissions: mergedPerms,
-          expiresAt,
-          createdAt: new Date().toISOString(),
-          isActive: true,
-        };
+      const apiToken: ApiToken = {
+        identifier,
+        name: request.name,
+        tokenHash,
+        permissions: mergedPerms,
+        expiresAt,
+        isActive: true,
+      };
 
-        await tokenTable.create(apiToken);
-        return { apiToken, rawToken };
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to create API token');
-        throw { errorResponse, status };
-      }
+      return { apiToken: await tokenTable.create(apiToken), rawToken: rawToken };
     },
 
-    async getUserApiTokens(identifier: string): Promise<ApiToken[]> {
-      try {
-        const tokens = await tokenTable.where('identifier', '==', identifier).get();
-        return tokens.map(t => ({ ...t, token: '***' }));
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to get API tokens');
-        throw { errorResponse, status };
-      }
+    async getUserApiTokens(): Promise<any[]> {
+      const tokens = await tokenTable.getAll();
+      return tokens.map(({ tokenHash, ...token }) => token);
     },
 
-    async revokeApiToken(identifier: string, tokenId: string): Promise<void> {
-      try {
-        const token = await tokenTable.findById(tokenId);
-        if (!token || token.identifier !== identifier) {
-          throw new Error('Token not found');
-        }
-        await tokenTable.update(tokenId, { isActive: false });
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to revoke API token');
-        throw { errorResponse, status };
+    async revokeApiToken(tokenId: string): Promise<void> {
+      const token = await tokenTable.findById(tokenId);
+      if (!token) {
+        throw new Error('Token not found');
       }
+      await tokenTable.update(tokenId, { isActive: false });
     },
 
-    async revokeAllApiTokens(identifier: string): Promise<void> {
-      try {
-        const tokens = await tokenTable.where('identifier', '==', identifier).get();
-        for (const t of tokens) {
-          await tokenTable.update(t.id, { isActive: false });
-        }
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to revoke all tokens');
-        throw { errorResponse, status };
+    async revokeAllApiTokens(): Promise<void> {
+      const tokens = await tokenTable.getAll();
+      for (const t of tokens) {
+        await tokenTable.update(t.id, { isActive: false });
       }
     },
 
@@ -101,66 +74,23 @@ export function createApiTokenService(userDO: UserDO): IApiTokenService {
     // II. VALIDATION
     // -------------------------------------------------------------------------
     async validateApiToken(token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }> {
-      try {
-        const allTokens = await tokenTable.getAll();
+      const allTokens = await tokenTable.getAll();
 
-        for (const apiToken of allTokens) {
-          const isValid = await tokenGenerator.verifyToken(token, apiToken.tokenHash);
-          if (isValid) {
-            if (!apiToken.isActive) return { isValid: false, error: 'Token revoked' };
-            if (apiToken.expiresAt && new Date(apiToken.expiresAt) < new Date())
-              return { isValid: false, error: 'Token expired' };
+      for (const apiToken of allTokens) {
+        const isValid = await tokenGenerator.verifyToken(token, apiToken.tokenHash);
+        if (isValid) {
+          if (!apiToken.isActive) 
+            throw new Error('Token is inactive');
+          if (apiToken.expiresAt && new Date(apiToken.expiresAt) < new Date())
+            throw new Error('Token expired');
 
-            await tokenTable.update(apiToken.id, { lastUsed: new Date().toISOString() });
-            return { isValid: true, token: apiToken };
-          }
+          return { isValid: true, token: apiToken };
         }
-
-        return { isValid: false, error: 'Invalid token' };
-      } catch (e) {
-        const { errorResponse } = handleError(e, 'Token validation failed');
-        return { isValid: false, error: errorResponse.error };
       }
-    },
+      return { isValid: false, error: 'Invalid token' };
+    }
 
-    // -------------------------------------------------------------------------
-    // III. USAGE RECORDS
-    // -------------------------------------------------------------------------
-    async recordTokenUsage(usage: ApiTokenUsage): Promise<void> {
-      try {
-        const newUsage = {
-          ...usage,
-          id: crypto.randomUUID(),
-          timestamp: new Date().toISOString(),
-        };
-        await usageTable.create(newUsage);
-
-        // Optional cleanup
-        const all = await usageTable
-          .where('tokenId', '==', usage.tokenId)
-          .orderBy('timestamp', 'desc')
-          .get();
-
-        if (all.length > API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS) {
-          const extra = all.slice(API_TOKEN_CONSTANTS.MAX_USAGE_RECORDS);
-          for (const old of extra) await usageTable.delete(old.id);
-        }
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to record token usage');
-        throw { errorResponse, status };
-      }
-    },
-
-    async getTokenUsage(tokenId: string, days: number = 30): Promise<ApiTokenUsage[]> {
-      try {
-        const usages = await usageTable.where('tokenId', '==', tokenId).get();
-        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        return usages.filter(u => new Date(u.timestamp) >= cutoff);
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, 'Failed to get token usage');
-        throw { errorResponse, status };
-      }
-    },
+    
   };
 }
 
@@ -188,34 +118,60 @@ export function createTokenGenerator(env: any): ITokenGenerator {
     },
 
     async verifyToken(token: string, hash: string): Promise<boolean> {
-      const computed = await this.hashToken(token);
+      const computed = await this.hashToken(token+ env.JWT_SECRET);
       return computed === hash;
     },
   };
 }
 
 export function createPermissionService(): IPermissionService {
-  const available = [
-    'read:profile',
-    'write:profile',
-    'read:tokens',
-    'write:tokens',
-    'ekyc:document:recognize',
-    'ekyc:face:verify',
-    'ekyc:face:liveness',
-    'admin:all',
-  ];
-
   return {
     validatePermissions(required: string[], userPerms: string[]): boolean {
       if (userPerms.includes('admin:all')) return true;
       return required.every(p => userPerms.includes(p));
     },
     getAvailablePermissions(): string[] {
-      return [...available];
+      return [...DEFAULT_PERMISSIONS];
     },
     createDefaultPermissions(): string[] {
-      return ['read:profile'];
+      return [...DEFAULT_PERMISSIONS];
     },
+  };
+}
+
+// Factory function để tạo KV service
+export function createKvService(env: any): IKvService {
+  return {
+    async checkRateLimit(sessionId: string): Promise<void> {
+      const now = Date.now();
+      
+      const recordStr = await env.NONCE_KV.get(`RateLimit:${sessionId}`);
+      const record = recordStr ? JSON.parse(recordStr) : null;
+
+      if (record && record.resetAt > now) {
+        if (record.count >= AUTH_CONSTANTS.RATE_LIMIT_MAX) {
+          throw new Error('Too many requests');
+        }
+
+        record.count += 1;
+        await env.NONCE_KV.put(
+          `RateLimit:${sessionId}`,
+          JSON.stringify(record),
+          {
+            expirationTtl: AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000,
+          }
+        );
+      } else {
+        const resetAt = now + AUTH_CONSTANTS.RATE_LIMIT_WINDOW;
+        const newRecord = { count: 1, resetAt };
+        await env.NONCE_KV.put(
+          `RateLimit:${sessionId}`,
+          JSON.stringify(newRecord),
+          {
+            expirationTtl: AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000,
+          }
+        );
+      }
+    }
   };
 }

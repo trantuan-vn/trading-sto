@@ -111,10 +111,8 @@ export type TwitterUserInfo = z.infer<typeof TwitterUserInfoSchema>;
 
 // Base schemas
 export const BaseUserSchema = z.object({
-  id: z.string(),
   identifier: z.string(), 
   role: z.enum(['member', 'admin']).default('member'),
-  createdAt: z.string(),
 });
 
 export type BaseUser = z.infer<typeof BaseUserSchema>;
@@ -132,12 +130,11 @@ export type User = z.infer<typeof UserSchema>;
 
 // Session Schema
 export const SessionSchema = z.object({
-  id: z.string().uuid(),
+  hashSessionId: z.string(),
   type: z.enum(['otp', 'siwe', 'oauth']), 
   token: z.string().optional(),
   refreshToken: z.string().optional(),
   expiresAt: z.string(),
-  createdAt: z.string(),
   ipAddress: z.string().optional(),
   userAgent: z.string().optional(),
   isActive: z.boolean().default(true),
@@ -148,8 +145,8 @@ export type Session = z.infer<typeof SessionSchema>;
 // VI. INTERFACE
 
 export interface IUserRepository {
-  get(): Promise<User | null>;
-  save(user: User): Promise<void>;
+  get(): Promise<any>;
+  save(user: User): Promise<any>;
   delete(): Promise<void>;
 }
 

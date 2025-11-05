@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../../features/auth/authMiddleware';
+import { requirePermissions } from '../../features/token/authMiddleware';
 import { createWebsocketApplicationService } from './application';
 import { handleError } from '../../shared/utils';
 
-export function createWebSocketRoutes(bindingName: string) {
+export function createDashboardWebSocketRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();
 
   // WebSocket connection endpoint
@@ -36,4 +37,23 @@ export function createWebSocketRoutes(bindingName: string) {
     }
   });
    return app;
+}
+
+export function createApiWebSocketRoutes(bindingName: string) {
+  const app = new Hono<{ Bindings: Env }>();
+
+  // WebSocket connection endpoint
+  app.get('/connect', async (c) => {
+    try {
+      const token = requirePermissions(c, ['websocket:connect']);
+      const wsApplicationService = createWebsocketApplicationService(c, bindingName);
+      return wsApplicationService.connectWebSocketUseCase(token.identifier);
+
+    } catch (e) {
+      const { errorResponse, status } = handleError(e, "Failed to authenticate WebSocket");
+      return c.json(errorResponse, status);
+    }
+  });
+
+  return app;
 }

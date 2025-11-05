@@ -1,18 +1,31 @@
 import { Hono } from 'hono';
 import { createDocumentAIService } from './application';
-import { handleError } from '../../shared/utils';
+import { handleError, getIPAndUserAgent } from '../../shared/utils';
 import { processFormData } from './utils';
 import { requirePermissions } from '../token/authMiddleware';
+import { EKYC_SERVICES } from './constant';
 
 export function createEkycRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();
   // Document recognition endpoint
   app.post('/recognize-document', async (c) => {
     try {
-      const token = requirePermissions(c, ['ekyc:document:recognize']);
+      // Lấy full URL
+      const fullUrl = new URL(c.req.url);
+      const endpoint = fullUrl.pathname; 
+      if (endpoint !== EKYC_SERVICES.DOCUMENT.RECOGNIZE) {
+        throw new Error('Invalid endpoint');
+      }
+      const { ipAddress, userAgent } = getIPAndUserAgent(c.req.raw);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+
+      const token = requirePermissions(c, [EKYC_SERVICES.DOCUMENT.RECOGNIZE]);
+
       const { image, docType } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.recognizeDocumentUseCase(token.identifier, { image, docType });
+      const result = await aiService.recognizeDocumentUseCase(token.identifier, { image, docType, endpoint, ipAddress, userAgent });
       
       return c.json(result);
     } catch (e) {
@@ -24,10 +37,17 @@ export function createEkycRoutes(bindingName: string) {
   // Face search endpoint
   app.post('/face-search', async (c) => {
     try {
-      const token = requirePermissions(c, ['ekyc:face:search']);
+      // Lấy full URL
+      const fullUrl = new URL(c.req.url);
+      const endpoint = fullUrl.pathname; 
+      if (endpoint !== EKYC_SERVICES.FACE.SEARCH) {
+        throw new Error('Invalid endpoint');
+      }
+
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.SEARCH]);
       const { image } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.faceSearchUseCase(token.identifier, image);
+      const result = await aiService.faceSearchUseCase(token.identifier, { image, endpoint });
       
       return c.json(result);
     } catch (e) {
@@ -39,7 +59,14 @@ export function createEkycRoutes(bindingName: string) {
   // Face verification endpoint
   app.post('/face-verify', async (c) => {
     try {
-      const token = requirePermissions(c, ['ekyc:face:verify']);  
+      // Lấy full URL
+      const fullUrl = new URL(c.req.url);
+      const endpoint = fullUrl.pathname; 
+      if (endpoint !== EKYC_SERVICES.FACE.VERIFY) {
+        throw new Error('Invalid endpoint');
+      }
+
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.VERIFY]);  
       const { image, image2 } = await processFormData(c);
       
       if (!image2) {
@@ -47,7 +74,7 @@ export function createEkycRoutes(bindingName: string) {
       }
 
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.faceVerifyUseCase(token.identifier, { image, image2 });
+      const result = await aiService.faceVerifyUseCase(token.identifier, { image, image2, endpoint });
       
       return c.json(result);
     } catch (e) {
@@ -57,12 +84,19 @@ export function createEkycRoutes(bindingName: string) {
   });
 
   // Liveness detection endpoint
-  app.post('/liveness', async (c) => {
+  app.post('/face-liveness', async (c) => {
     try {
-      const token = requirePermissions(c, ['ekyc:face:liveness']);
+      // Lấy full URL
+      const fullUrl = new URL(c.req.url);
+      const endpoint = fullUrl.pathname; 
+      if (endpoint !== EKYC_SERVICES.FACE.LIVENESS) {
+        throw new Error('Invalid endpoint');
+      }
+
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.LIVENESS]);
       const { image, isVideo } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.livenessDetectionUseCase(token.identifier, { image, isVideo });
+      const result = await aiService.livenessDetectionUseCase(token.identifier, { image, isVideo, endpoint });
       
       return c.json(result);
     } catch (e) {

@@ -1,11 +1,11 @@
 import { Hono } from 'hono';
 import { getCookie } from 'hono/cookie'  
-import { handleError, parseBody, getIPAndUserAgent } from '../../shared/utils';
+import { handleError, parseBody, getIPAndUserAgent, getSessionIdHash } from '../../shared/utils';
 
 import { requireAuth } from './authMiddleware';
 import { createApplicationService } from './application';
 import { OTPRequestSchema, OTPVerificationSchema, OAuthCallbackSchema, SIWEAuthSchema } from './domain';
-import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier, getSessionIdHash } from './utils';
+import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier } from './utils';
 import { AUTH_CONSTANTS } from './constants';
 
 export function createAuthRoutes(bindingName: string) {
@@ -23,7 +23,9 @@ export function createAuthRoutes(bindingName: string) {
       if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
         throw new Error(`Unsupported OAuth provider: ${provider}`);
       }
-      const {ipAddress, userAgent} = getIPAndUserAgent(c);
+
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }
@@ -49,7 +51,8 @@ export function createAuthRoutes(bindingName: string) {
         throw new Error('Invalid origin');
       }
 
-      const {ipAddress, userAgent} = getIPAndUserAgent(c);
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }
@@ -112,7 +115,8 @@ export function createAuthRoutes(bindingName: string) {
         throw new Error('Missing identifier');
       }
 
-      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }
@@ -141,7 +145,8 @@ export function createAuthRoutes(bindingName: string) {
       if (!identifier || !otp) {
         throw new Error('Missing identifier or OTP');
       }
-      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }
@@ -167,7 +172,8 @@ export function createAuthRoutes(bindingName: string) {
   // III. Wallet
   routes.get('/wallet/nonce', async (c) => {
     try {
-      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }
@@ -196,7 +202,8 @@ export function createAuthRoutes(bindingName: string) {
         throw new Error('Missing message or signature');
       }
 
-      const { ipAddress, userAgent } = getIPAndUserAgent(c);
+      const request = c.req.raw;
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
       if (!ipAddress || !userAgent) {
         throw new Error('Missing IP address or user agent');
       }

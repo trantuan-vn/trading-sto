@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getDO } from '../../shared/utils';
+import { getIdFromName } from '../../shared/utils';
 import { UserDO } from '../ws/infrastructure/UserDO';
 import { createVNPayService } from './infrastructure';
 import { 
@@ -28,40 +28,40 @@ interface IPaymentApplicationService {
 export function createPaymentApplicationService(c: Context, bindingName: string): IPaymentApplicationService {
   return {
     async createPaymentUrlUseCase(identifier: string, request: CreatePayment, ipAddr: string): Promise<PaymentUrlResult> {
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = CreatePaymentSchema.parse(request);
       return await vnpayService.createPaymentUrl(validatedRequest, ipAddr);
     },
 
     async processReturnUseCase(identifier: string, params: any): Promise<PaymentResult> {
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const vnpayService = createVNPayService(userDO);
       
       const validatedParams = VNPayReturnSchema.parse(params);
       return await vnpayService.processReturn(validatedParams);
     },
 
     async processIPNUseCase(identifier: string, params: any): Promise<PaymentResult> {
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const vnpayService = createVNPayService(userDO);
       
       const validatedParams = VNPayIPNSchema.parse(params);
       return await vnpayService.processIPN(validatedParams);
     },
 
     async queryTransactionUseCase(identifier: string, request: PaymentQuery, ipAddr: string): Promise<QueryDRResult> {
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = PaymentQuerySchema.parse(request);
       return await vnpayService.queryTransaction(validatedRequest, ipAddr);
     },
 
     async refundTransactionUseCase(identifier: string, request: RefundRequest, ipAddr: string): Promise<RefundResult> {
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = RefundSchema.parse(request);
       return await vnpayService.refundTransaction(validatedRequest, ipAddr);

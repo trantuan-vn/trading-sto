@@ -100,19 +100,16 @@ export class BroadcastServiceDO extends DurableObject {
       await this.globalCounters.create({
         key: 'totalUsers',
         value: 0,
-        updatedAt: Date.now()
       });
       
       await this.globalCounters.create({
         key: 'initialized',
         value: 1,
-        updatedAt: Date.now()
       });
       
       await this.globalCounters.create({
         key: 'scaleConfig',
         value: '1M+', 
-        updatedAt: Date.now()
       });
 
       // Initialize service config
@@ -253,7 +250,6 @@ export class BroadcastServiceDO extends DurableObject {
   }
 
   async createBroadcast(createData: CreateBroadcast): Promise<string> {
-    const broadcastId = `broadcast_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
     const broadcastData: BroadcastData = {
       message: BroadcastValidator.sanitizeBroadcastMessage(createData.message),
@@ -264,16 +260,15 @@ export class BroadcastServiceDO extends DurableObject {
       targetUsers: createData.targetUsers || null,
       priority: createData.priority || 'normal',
       expiresAt: createData.expiresIn ? Date.now() + createData.expiresIn : undefined,
-      broadcastId,
       retryCount: 0
     };
 
-    await this.broadcasts.create(broadcastData);
+    const broadcast= await this.broadcasts.create(broadcastData);
 
     // Trigger async processing với FULL MESSAGE DATA
-    this.state.waitUntil(this.processBroadcastWithMessage(broadcastId, broadcastData.message, createData.targetUsers));
+    this.state.waitUntil(this.processBroadcastWithMessage(broadcast.id, broadcast.message, createData.targetUsers));
     
-    return broadcastId;
+    return broadcast.id;
   }
 
   async getBroadcastData<T = any>(broadcastId: string): Promise<T | undefined> {
@@ -420,14 +415,11 @@ export class BroadcastServiceDO extends DurableObject {
     if (existingShard) {
       await this.userShards.update(existingShard.id, {
         userCount: existingShard.userCount + 1,
-        updatedAt: now
       });
     } else {
       await this.userShards.create({
         shardName,
         userCount: 1,
-        createdAt: now,
-        updatedAt: now
       });
     }
 
@@ -436,7 +428,6 @@ export class BroadcastServiceDO extends DurableObject {
     if (totalUsersCounter) {
       await this.globalCounters.update(totalUsersCounter.id, {
         value: totalUsersCounter.value + 1,
-        updatedAt: now
       });
     }
   }
@@ -460,7 +451,6 @@ export class BroadcastServiceDO extends DurableObject {
     if (existingShard) {
       await this.userShards.update(existingShard.id, {
         userCount: Math.max(0, existingShard.userCount - 1),
-        updatedAt: now
       });
     }
 
@@ -469,7 +459,6 @@ export class BroadcastServiceDO extends DurableObject {
     if (totalUsersCounter && totalUsersCounter.value > 0) {
       await this.globalCounters.update(totalUsersCounter.id, {
         value: totalUsersCounter.value - 1,
-        updatedAt: now
       });
     }
   }
@@ -680,13 +669,11 @@ export class BroadcastServiceDO extends DurableObject {
     if (configRecord) {
       await this.globalCounters.update(configRecord.id, {
         value: scale,
-        updatedAt: now
       });
     } else {
       await this.globalCounters.create({
         key: 'scaleConfigName',
         value: scale,
-        updatedAt: now
       });
     }
   }
@@ -707,7 +694,7 @@ export class BroadcastServiceDO extends DurableObject {
     const [totalUsers, activeShards, serviceConfig] = await Promise.all([
       this.getTotalUsers(),
       this.getAllShards(),
-      this.serviceConfigs.findById('default') || DEFAULT_SERVICE_CONFIG
+      this.serviceConfigs.where('scaleConfig', '==', this.scaleConfigName).first() || DEFAULT_SERVICE_CONFIG
     ]);
 
     const health = {
@@ -755,7 +742,7 @@ export class BroadcastServiceDO extends DurableObject {
       .sort((a, b) => b.timestamp - a.timestamp)
       .slice(0, limit)
       .map(broadcast => ({
-        broadcastId: broadcast.broadcastId,
+        broadcastId: broadcast.id,
         status: broadcast.status,
         delivered: broadcast.delivered,
         total: broadcast.total,

@@ -7,6 +7,9 @@ export const DocumentRecognitionSchema = z.object({
     'Only JPEG and PNG images are supported'
   ),
   docType: z.enum(['driver', 'cmt', 'cccd_front', 'cccd_back', 'passport', 'general']).default('general'),
+  endpoint: z.string(),
+  ipAddress: z.string(),
+  userAgent: z.string(),
   options: z.object({
     maxTokens: z.number().min(100).max(2000).default(500),
     language: z.string().default('vi'),
@@ -31,6 +34,9 @@ export const FaceSearchSchema = z.object({
     (file) => ['image/jpeg', 'image/png'].includes(file.type),
     'Only JPEG and PNG images are supported'
   ),
+  endpoint: z.string(),
+  ipAddress: z.string(),
+  userAgent: z.string(),
   options: z.object({
     maxTokens: z.number().min(50).max(1000).default(200),
     detectionThreshold: z.number().min(0).max(1).default(0.7),
@@ -73,6 +79,9 @@ export const FaceVerificationSchema = z.object({
     (file) => ['image/jpeg', 'image/png'].includes(file.type),
     'Only JPEG and PNG images are supported'
   ).nullable(),
+  endpoint: z.string(),
+  ipAddress: z.string(),
+  userAgent: z.string(),
   options: z.object({
     maxTokens: z.number().min(100).max(1000).default(300),
     similarityThreshold: z.number().min(0).max(1).default(0.75),
@@ -107,6 +116,9 @@ export const LivenessDetectionSchema = z.object({
     'Only JPEG and PNG images are supported'
   ),
   isVideo: z.boolean().default(false),
+  endpoint: z.string(),
+  ipAddress: z.string(),
+  userAgent: z.string(),
   options: z.object({
     maxTokens: z.number().min(50).max(1000).default(200),
     detectionMode: z.enum(['strict', 'normal', 'relaxed']).default('normal'),

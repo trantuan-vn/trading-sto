@@ -51,7 +51,7 @@ export class BroadcastValidator {
   }
 
   static validateBroadcastId(broadcastId: string): boolean {
-    return /^broadcast_\d+_[a-z0-9]{9}$/.test(broadcastId);
+    return z.string().min(1).max(256).safeParse(broadcastId).success;
   }
 }
 
@@ -68,16 +68,13 @@ export class ShardValidator {
     return UserRegistrationSchema.parse({
       userId,
       shardName,
-      registeredAt: Date.now()
     });
   }
 
   static validateUserBatch(userIds: string[], shardName: string): UserBatch {
     return UserBatchSchema.parse({
-      batchId: crypto.randomUUID(),
       userIds,
       shardName,
-      createdAt: Date.now(),
       size: userIds.length
     });
   }
@@ -100,7 +97,6 @@ export class ShardValidator {
 
   static validateCleanupOperation(inactiveUserIds: string[], shardName: string): CleanupOperation {
     return CleanupOperationSchema.parse({
-      operationId: crypto.randomUUID(),
       shardName,
       timestamp: Date.now(),
       inactiveUserIds,
@@ -117,7 +113,7 @@ export class ShardValidator {
   }
 
   static isValidBroadcastId(broadcastId: string): boolean {
-    return /^broadcast_\d+_[a-z0-9]{9}$/.test(broadcastId);
+    return z.string().min(1).max(256).safeParse(broadcastId).success;
   }
 
   static validateBatchSize(batchSize: number, config: ShardConfig): boolean {

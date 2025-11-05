@@ -205,12 +205,8 @@ export async function generateWallet(encryptionSecret: string): Promise<{
     mnemonicPhrase: encryptedMnemonic
   };
 }
-// IV. OAUTH
+// IV. Session
 
-export const getSessionIdHash = (ipAddress: string, userAgent: string, secret: string) => {
-  const data = `${ipAddress}|${userAgent}|${secret}`;
-  return CryptoJS.SHA256(data).toString(CryptoJS.enc.Hex);
-}
 
 export const validateSession = ( session: any, token?: string, refreshToken?: string): void => {
   if (!session || !session.isActive) {

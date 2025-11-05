@@ -47,7 +47,7 @@ export class UserShardDO extends DurableObject {
     );    
 
     // Initialize tables
-    this.userRegistrations = this.table('user_registrations', UserRegistrationSchema, { userScoped: true });
+    this.userRegistrations = this.table('user_registrations', UserRegistrationSchema);
     this.cleanupOperations = this.table('cleanup_operations', CleanupOperationSchema);
     this.shardPerformances = this.table('shard_performances', ShardPerformanceSchema);
     this.shardConfigs = this.table('shard_configs', ShardConfigSchema);
@@ -140,13 +140,12 @@ export class UserShardDO extends DurableObject {
           return await this.getPerformanceMetrics();
           
         default:
-          return this.createErrorResponse('NOT_FOUND', 'Endpoint not found');
+          throw new Error(`Unknown path: ${path}`);
       }
-
-      return this.createErrorResponse('METHOD_NOT_ALLOWED', 'Method not allowed');
+      throw new Error('Method not allowed');
     } catch (error) {
       handleError(error, 'UserShardDO fetch failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Internal server error');
+      return new Response('Internal Server Error', { status: 500 });
     }
   }
 
@@ -154,30 +153,26 @@ export class UserShardDO extends DurableObject {
   // II. INTERNAL MESSAGE HANDLER
   // =============================================
   private async handleInternalMessage(request: Request): Promise<Response> {
-    try {
-      // Ép kiểu rõ ràng cho dữ liệu JSON
-      const body = await request.json() as {
-        action: string;
-        [key: string]: any;
-      };
+    // Ép kiểu rõ ràng cho dữ liệu JSON
+    const body = await request.json() as {
+      action: string;
+      [key: string]: any;
+    };
 
-      const { action, ...data } = body;
-      
-      switch (action) {
-        case 'broadcast':
-          await this.handleFastBroadcast(data);
-          break;
-        case 'user_delivery_report':
-          await this.handleUserDeliveryReport(data);
-          break;
-        default:
-          return this.createErrorResponse('INVALID_ACTION', 'Unknown action');
-      }
-      
-      return new Response(JSON.stringify({ status: 'processed' }));
-    } catch (error) {
-      return this.createErrorResponse('INTERNAL_ERROR', 'Internal message processing failed');
+    const { action, ...data } = body;
+    
+    switch (action) {
+      case 'broadcast':
+        await this.handleFastBroadcast(data);
+        break;
+      case 'user_delivery_report':
+        await this.handleUserDeliveryReport(data);
+        break;
+      default:
+        throw new Error(`Unknown action: ${action}`);
     }
+    
+    return new Response(JSON.stringify({ status: 'processed' }));
   }
 
   // PHƯƠNG THỨC MỚI: Broadcast nhanh không chờ response
@@ -194,28 +189,23 @@ export class UserShardDO extends DurableObject {
 
   // PHƯƠNG THỨC MỚI: Xử lý broadcast tối ưu với full message
   private async processFastBroadcast(broadcastId: string, message: any, targetUsers?: string[]) {
-    try {
-      const users = targetUsers 
-        ? await this.getSpecificUsers(targetUsers) // Chỉ lấy users cụ thể
-        : await this.getActiveUsers(); // Lấy tất cả active users
+    const users = targetUsers 
+      ? await this.getSpecificUsers(targetUsers) // Chỉ lấy users cụ thể
+      : await this.getActiveUsers(); // Lấy tất cả active users
 
-      if (users.length === 0) {
-        console.log(`📭 Shard ${this.getShardName()} no users to broadcast`);
-        return;
-      }
-
-      console.log(`🎯 Shard ${this.getShardName()} broadcasting to ${users.length} users`);
-
-      // Chia thành batches và gửi ngay lập tức với FULL MESSAGE
-      const batches = this.createOptimizedBatches(users, broadcastId);
-      await this.sendBatchesWithMessage(batches, broadcastId, message);
-
-      // Báo cáo estimated delivery count (không cần chờ)
-      this.state.waitUntil(this.reportEstimatedDelivery(broadcastId, users.length));
-
-    } catch (error) {
-      console.error(`Fast broadcast failed for ${broadcastId}:`, error);
+    if (users.length === 0) {
+      console.log(`📭 Shard ${this.getShardName()} no users to broadcast`);
+      return;
     }
+
+    console.log(`🎯 Shard ${this.getShardName()} broadcasting to ${users.length} users`);
+
+    // Chia thành batches và gửi ngay lập tức với FULL MESSAGE
+    const batches = this.createOptimizedBatches(users, broadcastId);
+    await this.sendBatchesWithMessage(batches, broadcastId, message);
+
+    // Báo cáo estimated delivery count (không cần chờ)
+    this.state.waitUntil(this.reportEstimatedDelivery(broadcastId, users.length));
   }
 
   // PHƯƠNG THỨC MỚI: Lấy specific users hiệu quả
@@ -271,49 +261,39 @@ export class UserShardDO extends DurableObject {
 
   // PHƯƠNG THỨC MỚI: Gửi batch đến users với full message
   private async sendBatchToUsersWithMessage(batch: UserBatch, broadcastId: string, message: any) {
-    try {
-      // Gửi song song đến tất cả users trong batch
-      const userPromises = batch.userIds.map(userId =>
-        this.sendToUserDirect(userId, {
-          type: 'broadcast',
-          broadcastId,
-          message: message, // QUAN TRỌNG: gửi luôn message content
-          timestamp: Date.now()
-        })
-      );
+    // Gửi song song đến tất cả users trong batch
+    const userPromises = batch.userIds.map(userId =>
+      this.sendToUserDirect(userId, {
+        type: 'broadcast',
+        broadcastId,
+        message: message,
+        timestamp: Date.now()
+      })
+    );
 
-      const results = await Promise.allSettled(userPromises);
-      const successfulSends = results.filter(r => r.status === 'fulfilled').length;
-      
-      // Cập nhật metrics local
-      await this.updateLocalMetrics(broadcastId, successfulSends);
+    const results = await Promise.allSettled(userPromises);
+    const successfulSends = results.filter(r => r.status === 'fulfilled').length;
+    
+    // Cập nhật metrics local
+    await this.updateLocalMetrics(broadcastId, successfulSends);
 
-      console.log(`✅ Batch ${batch.batchId}: ${successfulSends}/${batch.userIds.length} users sent`);
-
-    } catch (error) {
-      console.error(`Batch ${batch.batchId} failed:`, error);
-    }
+    console.log(`✅ Batch ${batch.batchId}: ${successfulSends}/${batch.userIds.length} users sent`);
   }
 
   // PHƯƠNG THỨC MỚI: Gửi message đến user nhanh
   private async sendToUserDirect(userId: string, message: any) {
-    try {
-      const userDO = this.env.USER_DO.get(
-        this.env.USER_DO.idFromName(userId)
-      );
-      
-      // Sử dụng internal endpoint để tránh overhead của WebSocket
-      await userDO.fetch('https://user.internal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(message)
-      });
-      
-      return { success: true, userId };
-    } catch (error) {
-      console.warn(`Failed to send to user ${userId}:`, error);
-      throw error;
-    }
+    const userDO = this.env.USER_DO.get(
+      this.env.USER_DO.idFromName(userId)
+    );
+    
+    // Sử dụng internal endpoint để tránh overhead của WebSocket
+    await userDO.fetch('https://user.internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message)
+    });
+    
+    return { success: true, userId };
   }
 
   // PHƯƠNG THỨC MỚI: Cập nhật metrics local
@@ -331,32 +311,27 @@ export class UserShardDO extends DurableObject {
     const deliveredCount = await this.storage.get<number>(`delivery_${broadcastId}`) || 0;
     
     if (deliveredCount > 0) {
-      try {
-        const broadcastService = this.env.BROADCAST_SERVICE_DO.get(
-          this.env.BROADCAST_SERVICE_DO.idFromName("global")
-        );
-        
-        // Gửi báo cáo delivery đến service
-        await broadcastService.fetch('https://broadcast.internal', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'delivery_report',
-            broadcastId,
-            deliveredCount,
-            shardName: this.getShardName(),
-            timestamp: Date.now()
-          })
-        });
-        
-        console.log(`📊 Shard ${this.getShardName()} reported ${deliveredCount} deliveries for ${broadcastId}`);
-        
-        // Reset counter local
-        await this.storage.delete(`delivery_${broadcastId}`);
-        
-      } catch (error) {
-        console.warn(`Failed to report delivery for ${broadcastId}:`, error);
-      }
+      const broadcastService = this.env.BROADCAST_SERVICE_DO.get(
+        this.env.BROADCAST_SERVICE_DO.idFromName("global")
+      );
+      
+      // Gửi báo cáo delivery đến service
+      await broadcastService.fetch('https://broadcast.internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delivery_report',
+          broadcastId,
+          deliveredCount,
+          shardName: this.getShardName(),
+          timestamp: Date.now()
+        })
+      });
+      
+      console.log(`📊 Shard ${this.getShardName()} reported ${deliveredCount} deliveries for ${broadcastId}`);
+      
+      // Reset counter local
+      await this.storage.delete(`delivery_${broadcastId}`);        
     }
   }
 
@@ -383,7 +358,6 @@ export class UserShardDO extends DurableObject {
       // Update last active time
       await this.userRegistrations.update(existingUser.id, {
         ...existingUser,
-        lastSeen: Date.now(),
         isActive: true
       });
       return;
@@ -394,10 +368,8 @@ export class UserShardDO extends DurableObject {
     await this.userRegistrations.create({
       userId: userRegistration.userId,
       shardName: userRegistration.shardName,
-      registeredAt: userRegistration.registeredAt,
       tags: [],
       priority: 'normal',
-      lastSeen: userRegistration.registeredAt,
       isActive: true
     });
 
@@ -490,32 +462,27 @@ export class UserShardDO extends DurableObject {
   // V. CONFIGURATION MANAGEMENT
   // =============================================
   private async handleUpdateConfig(request: Request): Promise<Response> {
-    try {
-      const body = await request.json();
-      const { scale } = body as { scale: string };
-      
-      if (!scale || !DEFAULT_SHARD_CONFIGS[scale as ShardConfigName]) {
-        return this.createErrorResponse('VALIDATION_ERROR', 'Invalid shard configuration');
-      }
+    const body = await request.json();
+    const { scale } = body as { scale: string };
+    
+    if (!scale || !DEFAULT_SHARD_CONFIGS[scale as ShardConfigName]) {
+      throw new Error('Invalid scale');
+    }
 
-      const previousConfig = this.shardConfigName;
-      await this.updateShardConfig(scale as ShardConfigName);
-      
-      const response: ShardConfigResponse = {
-        scale: scale as ShardConfigName,
-        config: this.shardConfig,
-        shardName: this.getShardName(),
-        previousConfig,
-        estimatedCapacity: this.getEstimatedCapacity()
-      };
+    const previousConfig = this.shardConfigName;
+    await this.updateShardConfig(scale as ShardConfigName);
+    
+    const response: ShardConfigResponse = {
+      scale: scale as ShardConfigName,
+      config: this.shardConfig,
+      shardName: this.getShardName(),
+      previousConfig,
+      estimatedCapacity: this.getEstimatedCapacity()
+    };
 
-      return new Response(JSON.stringify(response), {
+    return new Response(JSON.stringify(response), {
       headers: { 'Content-Type': 'application/json' }
     });
-    } catch (error) {
-      handleError(error, 'Update shard config failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Failed to update shard config');
-    }
   }
 
   async updateShardConfig(scale: ShardConfigName) {
@@ -589,24 +556,19 @@ export class UserShardDO extends DurableObject {
   // VII. CLEANUP AND MAINTENANCE
   // =============================================
   private async handleCleanup(request: Request): Promise<Response> {
-    try {
-      const body = await request.json();
-      const { inactiveUserIds, cleanupThreshold } = body as { inactiveUserIds: string[], cleanupThreshold?: number };
+    const body = await request.json();
+    const { inactiveUserIds, cleanupThreshold } = body as { inactiveUserIds: string[], cleanupThreshold?: number };
 
-      if (!Array.isArray(inactiveUserIds)) {
-        return this.createErrorResponse('VALIDATION_ERROR', 'Invalid inactive user IDs');
-      }
-
-      const validUserIds = inactiveUserIds.filter(id => ShardValidator.isValidUserId(id));
-      const operation = await this.cleanupInactiveUsers(validUserIds, cleanupThreshold);
-
-      return new Response(JSON.stringify(operation), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleError(error, 'Cleanup operation failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Cleanup operation failed');
+    if (!Array.isArray(inactiveUserIds)) {
+      throw new Error('Invalid inactive user IDs');
     }
+
+    const validUserIds = inactiveUserIds.filter(id => ShardValidator.isValidUserId(id));
+    const operation = await this.cleanupInactiveUsers(validUserIds, cleanupThreshold);
+
+    return new Response(JSON.stringify(operation), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   async cleanupInactiveUsers(inactiveUserIds: string[], cleanupThreshold?: number): Promise<CleanupOperation> {
@@ -676,17 +638,5 @@ export class UserShardDO extends DurableObject {
     if (hourlyCapacity >= 1000000) return `${Math.round(hourlyCapacity / 1000000)}M+/hour`;
     if (hourlyCapacity >= 1000) return `${Math.round(hourlyCapacity / 1000)}K+/hour`;
     return `${hourlyCapacity}+/hour`;
-  }
-
-  private createErrorResponse(code: string, message: string): Response {
-    return new Response(JSON.stringify({
-      error: message,
-      code,
-      timestamp: Date.now()
-    }), {
-      status: code === 'NOT_FOUND' ? 404 : 
-              code === 'VALIDATION_ERROR' ? 400 : 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
   }
 }

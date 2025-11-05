@@ -38,3 +38,8 @@ export function getResponseMessage(responseCode: string): string {
   
   return messages[responseCode] || 'Unknown error';
 }
+
+// Helper to get client IP
+export const getClientIp = (c: any): string => {
+  return c.req.headers.get('CF-Connecting-IP') || c.req.headers.get('X-Real-IP') || c.req.headers.get('X-Forwarded-For');
+};

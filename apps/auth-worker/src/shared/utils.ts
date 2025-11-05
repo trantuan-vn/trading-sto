@@ -49,7 +49,7 @@ export const parseBody = async (c: Context, schema: any) => {
   }
 };
 
-export function getDO<T>(c: Context, identifier: string, bindingName: string): T {
+export function getIdFromName<T>(c: Context, identifier: string, bindingName: string): T {
   const binding = c.env[bindingName];
   if (!binding) {
     throw new Error(`Durable Object binding '${bindingName}' not found. Make sure it's configured in wrangler.jsonc`);
@@ -58,13 +58,27 @@ export function getDO<T>(c: Context, identifier: string, bindingName: string): T
   return binding.get(doID) as unknown as T;
 }
 
+export function getIdFromString<T>(c: Context, id: string, bindingName: string): T {
+  const binding = c.env[bindingName];
+  if (!binding) {
+    throw new Error(`Durable Object binding '${bindingName}' not found. Make sure it's configured in wrangler.jsonc`);
+  }
+  const doID = binding.idFromName(id);
+  return binding.get(doID) as unknown as T;
+}
+
 export function isAdmin(identifier: string) {
   return identifier === 'tuanta2021@gmail.com';
 }
 
-export function getIPAndUserAgent(c: Context) {
-  const request = c.req.raw;
+export function getIPAndUserAgent(request: Request) {
   const ipAddress = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Real-IP') || request.headers.get('X-Forwarded-For');
   const userAgent = request.headers.get('User-Agent');
   return { ipAddress, userAgent };
 }
+
+export const getSessionIdHash = (ipAddress: string, userAgent: string, secret: string) => {
+  const data = `${ipAddress}|${userAgent}|${secret}`;
+  return CryptoJS.SHA256(data).toString(CryptoJS.enc.Hex);
+}
+

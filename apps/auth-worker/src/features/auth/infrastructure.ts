@@ -14,18 +14,17 @@ export function createRepository(userDO: UserDO) {
   const sessions = userDO.table('sessions', SessionSchema, { userScoped: true });
 
   const userRepository: IUserRepository = {
-    async get(): Promise<User | null> {
-      const user = await users.where('id', '==', userDO.getCurrentUserId()).first();
-      return user ? UserSchema.parse(user) : null;
+    async get(): Promise<any> {
+      return await users.where('id', '==', userDO.getCurrentUserId()).first();
     },
 
-    async save(user: User): Promise<void> {
+    async save(user: User): Promise<any> {
       const validUser = UserSchema.parse(user);
       const existingUser = await users.where('identifier', '==', user.identifier).first();
       if (existingUser) {
-        await users.update(existingUser.id, validUser);
+        return await users.update(existingUser.id, validUser);
       } else {
-        await users.create(validUser);
+        return await users.create(validUser);
       }
     },
 

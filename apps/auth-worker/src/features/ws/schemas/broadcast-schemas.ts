@@ -30,7 +30,6 @@ export const BroadcastDataSchema = z.object({
   lastDeliveryTime: z.number().int().positive().optional(),
   error: z.string().optional(),
   retryCount: z.number().int().nonnegative().default(0),
-  broadcastId: z.string().optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
   expiresAt: z.number().int().positive().optional()
 });
@@ -103,14 +102,11 @@ export const DeliveryStatsSchema = z.object({
 export const UserShardSchema = z.object({
   shardName: z.string(),
   userCount: z.number().default(0),
-  createdAt: z.number(),
-  updatedAt: z.number()
 });
 
 export const GlobalCounterSchema = z.object({
   key: z.string(),
   value: z.any(),
-  updatedAt: z.number()
 })
 
 // Export types

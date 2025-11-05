@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getDO } from '../../shared/utils';
+import { getIdFromName } from '../../shared/utils';
 import { UserDO } from './infrastructure/UserDO';
 import { BroadcastServiceDO } from './infrastructure/BroadcastServiceDO';
 
@@ -11,12 +11,12 @@ interface IWebsocketApplicationService {
 export function createWebsocketApplicationService(c: Context, bindingName: string): IWebsocketApplicationService {
     return {
         connectWebSocketUseCase: (identifier: string) => {
-            const userDO = getDO<UserDO>(c, identifier, bindingName);
+            const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
             const request = c.req.raw;
             return userDO.fetch(request);
         },
         broadcastMessageUseCase: (request: Request) => {
-            const broadcastService = getDO<BroadcastServiceDO>(c, "global", "BROADCAST_SERVICE_DO");
+            const broadcastService = getIdFromName<BroadcastServiceDO>(c, "global", "BROADCAST_SERVICE_DO");
             return broadcastService.fetch(request);
         }
     }

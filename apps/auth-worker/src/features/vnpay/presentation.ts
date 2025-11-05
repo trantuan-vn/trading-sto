@@ -2,16 +2,10 @@ import { Hono } from 'hono';
 import { handleError } from '../../shared/utils';
 import { createPaymentApplicationService } from './application';
 import { requireAuth } from '../auth/authMiddleware';
+import { getClientIp } from './utils';
 
 export function createPaymentRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();
-
-  // Helper to get client IP
-  const getClientIp = (c: any): string => {
-    return c.req.header('x-forwarded-for') ||
-           c.req.header('x-real-ip') ||
-           'unknown';
-  };
 
   // Create payment URL
   app.post('/create_payment_url', async (c) => {

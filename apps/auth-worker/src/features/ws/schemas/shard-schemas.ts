@@ -36,11 +36,9 @@ export const ShardStorageSchema = z.object({
 export const UserRegistrationSchema = z.object({
   userId: z.string().min(1).max(256),
   shardName: z.string(),
-  registeredAt: z.number().int().positive(),
   segment: z.string().optional(),
   tags: z.array(z.string()).default([]),
   priority: z.enum(['low', 'normal', 'high']).default('normal'),
-  lastSeen: z.number().int().positive().optional(),
   isActive: z.boolean().default(true)
 });
 

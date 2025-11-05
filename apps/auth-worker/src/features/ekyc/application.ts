@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getDO } from '../../shared/utils';
+import { getIdFromName } from '../../shared/utils';
 import { UserDO } from '../ws/infrastructure/UserDO';
 import { createAIService } from './infrastructure';
 import { 
@@ -37,8 +37,8 @@ export function createDocumentAIService(c: Context, bindingName: string): IAIDoc
       // Validate request with Zod schema
       const validatedRequest = DocumentRecognitionSchema.parse(request);
       
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const aiService = createAIService(userDO);
       
       const result = await aiService.recognizeDocument(validatedRequest);
       
@@ -50,8 +50,8 @@ export function createDocumentAIService(c: Context, bindingName: string): IAIDoc
       // Validate request with Zod schema
       const validatedRequest = FaceSearchSchema.parse(request);
       
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const aiService = createAIService(userDO);
       
       const result = await aiService.faceSearch(validatedRequest);
       
@@ -63,8 +63,8 @@ export function createDocumentAIService(c: Context, bindingName: string): IAIDoc
       // Validate request with Zod schema
       const validatedRequest = FaceVerificationSchema.parse(request);
       
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const aiService = createAIService(userDO);
       
       const result = await aiService.faceVerify(validatedRequest);
       
@@ -76,8 +76,8 @@ export function createDocumentAIService(c: Context, bindingName: string): IAIDoc
       // Validate request with Zod schema
       const validatedRequest = LivenessDetectionSchema.parse(request);
       
-      const userDO = getDO<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO.getStorage(), userDO.getEnv());
+      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const aiService = createAIService(userDO);
       
       const result = await aiService.livenessDetection(validatedRequest);
       
