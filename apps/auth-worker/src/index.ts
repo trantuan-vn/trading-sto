@@ -12,7 +12,7 @@ export { UserDO } from './features/ws/infrastructure/UserDO';
 export { BroadcastServiceDO } from './features/ws/infrastructure/BroadcastServiceDO';
 export { UserShardDO } from './features/ws/infrastructure/UserShardDO';
 
-// I. CREATE ROUTES
+// I. CREATE ROUTES 
 function createRoutes(bindingName: string) {
   const routes = new Hono<{ Bindings: Env }>();
   // Security middleware
@@ -21,15 +21,17 @@ function createRoutes(bindingName: string) {
   routes.use('*', securityHeadersMiddleware());
   // CORS middleware (must come before auth middleware)
   routes.use('/*', cors({
-    origin: [
-      'https://beta.unitoken.trade',
-      'https://www.beta.unitoken.trade',
-      'https://unitoken.trade',
-      'https://www.unitoken.trade'
-    ], 
-    allowHeaders: ['Content-Type', 'Authorization'],
-    credentials: true, 
-    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      origin: [
+        'https://beta.unitoken.trade',
+        'https://www.beta.unitoken.trade',
+        'https://unitoken.trade',
+        'https://www.unitoken.trade',
+        'https://sandbox.vnpayment.vn',
+        'https://vnpayment.vn'
+      ], 
+      allowHeaders: ['Content-Type', 'Authorization'],
+      credentials: true, 
+      allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   }));
 
   // I. DASHBOARD

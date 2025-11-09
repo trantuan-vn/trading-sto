@@ -3,7 +3,7 @@ import { getIdFromName, isAdmin } from '../../shared/utils';
 import { UserDO } from '../ws/infrastructure/UserDO';
 import { SiweMessage } from 'siwe';
 
-import { User, OAuthProvider, Session } from './domain';
+import { OAuthProvider, Session } from './domain';
 import { getOAuthConfig, getOAuthScopes, generateWallet, isValidEmail, isValidPhone, 
   generateAccessToken, generateRefreshToken, verifyJWT, normalizeIdentifier, validateSession } from './utils';
 import { createOAuthService, createKvService, createRepository, createOTPService, createWalletService } from './infrastructure';
@@ -257,6 +257,10 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       token: string, 
       refreshToken: string
     ): Promise<{ ok: boolean; user: any }> {
+
+      const kvService = createKvService(c.env);
+      await kvService.checkRateLimit(sessionId);
+
       // Verify JWT token
       const result = await verifyJWT(token, c.env.JWT_SECRET);
       if (!result.ok) {
@@ -288,6 +292,8 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       sessionId: string, 
       refreshToken: string
     ): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }> {
+      const kvService = createKvService(c.env);
+      await kvService.checkRateLimit(sessionId);
       // Verify refresh token
       const result = await verifyJWT(refreshToken, c.env.JWT_SECRET);
       if (!result.ok) {

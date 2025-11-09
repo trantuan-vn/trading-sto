@@ -39,7 +39,29 @@ export function getResponseMessage(responseCode: string): string {
   return messages[responseCode] || 'Unknown error';
 }
 
-// Helper to get client IP
-export const getClientIp = (c: any): string => {
-  return c.req.headers.get('CF-Connecting-IP') || c.req.headers.get('X-Real-IP') || c.req.headers.get('X-Forwarded-For');
-};
+export function getQueryDRMessage(responseCode: string): string {
+  const messages: Record<string, string> = {
+    '00': 'Yêu cầu thành công',
+    '02': 'Mã định danh kết nối không hợp lệ (kiểm tra lại TmnCode)',
+    '03': 'Dữ liệu gửi sang không đúng định dạng' ,
+    '91': 'Không tìm thấy giao dịch yêu cầu' ,
+    '94': 'Yêu cầu trùng lặp, duplicate request trong thời gian giới hạn của API' ,
+    '97': 'Checksum không hợp lệ' ,
+    '99': 'Các lỗi khác (lỗi còn lại, không có trong danh sách mã lỗi đã liệt kê)'
+  };
+  return messages[responseCode] || 'Unknown error';
+}
+
+export function getRefundMessage(responseCode: string): string {
+  const messages: Record<string, string> = {
+    '00': 'Yêu cầu thành công',
+    '02': 'Mã định danh kết nối không hợp lệ (kiểm tra lại TmnCode)',
+    '03': 'Dữ liệu gửi sang không đúng định dạng',
+    '91': 'Không tìm thấy giao dịch yêu cầu hoàn trả',
+    '94': 'Giao dịch đã được gửi yêu cầu hoàn tiền trước đó. Yêu cầu này VNPAY đang xử lý',
+    '95': 'Giao dịch này không thành công bên VNPAY. VNPAY từ chối xử lý yêu cầu',
+    '97': 'Checksum không hợp lệ',
+    '99': 'Các lỗi khác (lỗi còn lại, không có trong danh sách mã lỗi đã liệt kê)'
+  };
+  return messages[responseCode] || 'Unknown error';
+}

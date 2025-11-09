@@ -1,8 +1,7 @@
 import { Hono } from 'hono';
-import { handleError } from '../../shared/utils';
+import { handleError, getClientIp } from '../../shared/utils';
 import { createPaymentApplicationService } from './application';
 import { requireAuth } from '../auth/authMiddleware';
-import { getClientIp } from './utils';
 
 export function createPaymentRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();
@@ -15,12 +14,10 @@ export function createPaymentRoutes(bindingName: string) {
       const ipAddr = getClientIp(c);
       
       const paymentService = createPaymentApplicationService(c, bindingName);
-      const result = await paymentService.createPaymentUrlUseCase(user.identifier, request, ipAddr);
+      const paymentUrl = await paymentService.createPaymentUrlUseCase(user.identifier, request, ipAddr);
       
-      return c.json({
-        success: true,
-        data: result
-      });
+      return c.redirect(paymentUrl);
+      
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to create payment URL');
       return c.json(errorResponse, status);
@@ -30,11 +27,10 @@ export function createPaymentRoutes(bindingName: string) {
   // VNPay return URL
   app.get('/vnpay_return', async (c) => {
     try {
-      const user = requireAuth(c);
       const params = c.req.query();
       
       const paymentService = createPaymentApplicationService(c, bindingName);
-      const result = await paymentService.processReturnUseCase(user.identifier, params);
+      const result = await paymentService.processReturnUseCase(params);
       
       // Render success page with result
       return c.json({
@@ -42,7 +38,9 @@ export function createPaymentRoutes(bindingName: string) {
         code: result.code,
         message: result.message,
         orderId: result.orderId,
-        amount: result.amount
+        amount: result.amount,
+        transactionNo: result.transactionNo,
+        bankCode: result.bankCode
       });
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to process return');
@@ -53,11 +51,10 @@ export function createPaymentRoutes(bindingName: string) {
   // VNPay IPN URL
   app.get('/vnpay_ipn', async (c) => {
     try {
-      const user = requireAuth(c);
       const params = c.req.query();
       
       const paymentService = createPaymentApplicationService(c, bindingName);
-      const result = await paymentService.processIPNUseCase(user.identifier, params);
+      const result = await paymentService.processIPNUseCase(params);
       
       return c.json({
         RspCode: result.code,

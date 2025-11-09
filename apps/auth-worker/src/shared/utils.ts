@@ -1,4 +1,3 @@
-import { ErrorResponse } from './types';
 import { Context } from 'hono'
 
 export const handleError = (e: any, defaultMessage: string) => {
@@ -31,7 +30,7 @@ export const handleError = (e: any, defaultMessage: string) => {
   };
   console.error("❌ [ErrorHandler]", JSON.stringify(errorLog, null, 2));
 
-  const errorResponse: ErrorResponse = { error: `${defaultMessage}`};
+  const errorResponse = { error: `${defaultMessage}`};
   return { errorResponse, status: 400 as const };
 };
 
@@ -81,4 +80,8 @@ export const getSessionIdHash = (ipAddress: string, userAgent: string, secret: s
   const data = `${ipAddress}|${userAgent}|${secret}`;
   return CryptoJS.SHA256(data).toString(CryptoJS.enc.Hex);
 }
+
+export const getClientIp = (c: any): string => {
+  return c.req.headers.get('CF-Connecting-IP') || c.req.headers.get('X-Real-IP') || c.req.headers.get('X-Forwarded-For');
+};
 

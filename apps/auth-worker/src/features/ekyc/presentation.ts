@@ -13,7 +13,7 @@ export function createEkycRoutes(bindingName: string) {
       // Lấy full URL
       const fullUrl = new URL(c.req.url);
       const endpoint = fullUrl.pathname; 
-      if (endpoint !== EKYC_SERVICES.DOCUMENT.RECOGNIZE) {
+      if (endpoint !== EKYC_SERVICES.DOCUMENT.RECOGNIZE.path) {
         throw new Error('Invalid endpoint');
       }
       const { ipAddress, userAgent } = getIPAndUserAgent(c.req.raw);
@@ -21,7 +21,7 @@ export function createEkycRoutes(bindingName: string) {
         throw new Error('Missing IP address or user agent');
       }
 
-      const token = requirePermissions(c, [EKYC_SERVICES.DOCUMENT.RECOGNIZE]);
+      const token = requirePermissions(c, [EKYC_SERVICES.DOCUMENT.RECOGNIZE.path]);
 
       const { image, docType } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
@@ -40,14 +40,19 @@ export function createEkycRoutes(bindingName: string) {
       // Lấy full URL
       const fullUrl = new URL(c.req.url);
       const endpoint = fullUrl.pathname; 
-      if (endpoint !== EKYC_SERVICES.FACE.SEARCH) {
+      if (endpoint !== EKYC_SERVICES.FACE.SEARCH.path) {
         throw new Error('Invalid endpoint');
       }
 
-      const token = requirePermissions(c, [EKYC_SERVICES.FACE.SEARCH]);
+      const { ipAddress, userAgent } = getIPAndUserAgent(c.req.raw);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.SEARCH.path]);
       const { image } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.faceSearchUseCase(token.identifier, { image, endpoint });
+      const result = await aiService.faceSearchUseCase(token.identifier, { image, endpoint, ipAddress, userAgent });
       
       return c.json(result);
     } catch (e) {
@@ -62,11 +67,14 @@ export function createEkycRoutes(bindingName: string) {
       // Lấy full URL
       const fullUrl = new URL(c.req.url);
       const endpoint = fullUrl.pathname; 
-      if (endpoint !== EKYC_SERVICES.FACE.VERIFY) {
+      if (endpoint !== EKYC_SERVICES.FACE.VERIFY.path) {
         throw new Error('Invalid endpoint');
       }
-
-      const token = requirePermissions(c, [EKYC_SERVICES.FACE.VERIFY]);  
+      const { ipAddress, userAgent } = getIPAndUserAgent(c.req.raw);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.VERIFY.path]);  
       const { image, image2 } = await processFormData(c);
       
       if (!image2) {
@@ -74,7 +82,7 @@ export function createEkycRoutes(bindingName: string) {
       }
 
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.faceVerifyUseCase(token.identifier, { image, image2, endpoint });
+      const result = await aiService.faceVerifyUseCase(token.identifier, { image, image2, endpoint, ipAddress, userAgent });
       
       return c.json(result);
     } catch (e) {
@@ -89,14 +97,18 @@ export function createEkycRoutes(bindingName: string) {
       // Lấy full URL
       const fullUrl = new URL(c.req.url);
       const endpoint = fullUrl.pathname; 
-      if (endpoint !== EKYC_SERVICES.FACE.LIVENESS) {
+      if (endpoint !== EKYC_SERVICES.FACE.LIVENESS.path) {
         throw new Error('Invalid endpoint');
       }
+      const { ipAddress, userAgent } = getIPAndUserAgent(c.req.raw);
+      if (!ipAddress || !userAgent) {
+        throw new Error('Missing IP address or user agent');
+      }
 
-      const token = requirePermissions(c, [EKYC_SERVICES.FACE.LIVENESS]);
+      const token = requirePermissions(c, [EKYC_SERVICES.FACE.LIVENESS.path]);
       const { image, isVideo } = await processFormData(c);
       const aiService = createDocumentAIService(c, bindingName);
-      const result = await aiService.livenessDetectionUseCase(token.identifier, { image, isVideo, endpoint });
+      const result = await aiService.livenessDetectionUseCase(token.identifier, { image, isVideo, endpoint, ipAddress, userAgent });
       
       return c.json(result);
     } catch (e) {

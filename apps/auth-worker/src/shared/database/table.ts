@@ -17,7 +17,7 @@ export class GenericTable<T = any> {
   private get organizationContext(): string | undefined {
     return this.getOrganizationContext();
   }
-
+  
   async create(data: T): Promise<T & { id: string; createdAt: Date; updatedAt: Date }> {
     const validated = this.schema.parse(data);
     const id = crypto.randomUUID();
@@ -37,9 +37,6 @@ export class GenericTable<T = any> {
     this.storage.sql.exec(insertSQL, ...params);
 
     const result = { ...validated, id, createdAt: new Date(now), updatedAt: new Date(now) };
-
-    // Broadcast table change
-    this.broadcast?.(`table:${this.tableName}`, { type: 'create', data: result });
 
     return result;
   }
@@ -101,9 +98,6 @@ export class GenericTable<T = any> {
 
     const result = { ...validated, id, createdAt: existing.createdAt, updatedAt: new Date(now) };
 
-    // Broadcast table change
-    this.broadcast?.(`table:${this.tableName}`, { type: 'update', data: result });
-
     return result;
   }
 
@@ -120,12 +114,9 @@ export class GenericTable<T = any> {
     }
 
     this.storage.sql.exec(deleteSQL, ...params);
-
-    // Broadcast table change
-    this.broadcast?.(`table:${this.tableName}`, { type: 'delete', data: { id } });
   }
 
-  where(path: string, operator: '==' | '!=' | '>' | '<' | 'includes', value: any): GenericQuery<T> {
+  where(path: string, operator: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'includes' | 'in', value: any): GenericQuery<T> {
     return new GenericQuery<T>(this.tableName, this.storage, this.schema, this.userId, this.getOrganizationContext).where(path, operator, value);
   }
 
@@ -156,5 +147,174 @@ export class GenericTable<T = any> {
     const cursor = this.storage.sql.exec(sql, ...params);
     const results = cursor.toArray();
     return results.length > 0 ? Number(results[0].count) : 0;
+  }
+// ============ SYNC METHODS (new) ============
+
+  /**
+   * Create record synchronously for transactions
+   */
+  createSync(data: T): T & { id: string; createdAt: Date; updatedAt: Date } {
+    const validated = this.schema.parse(data);
+    const id = crypto.randomUUID();
+    const now = Date.now();
+
+    let insertSQL: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      insertSQL = `INSERT INTO "${this.tableName}" (id, data, created_at, updated_at, user_id, organization_id) VALUES (?, ?, ?, ?, ?, ?)`;
+      params = [id, JSON.stringify(validated), now, now, this.userId, this.organizationContext];
+    } else {
+      insertSQL = `INSERT INTO "${this.tableName}" (id, data, created_at, updated_at, user_id) VALUES (?, ?, ?, ?, ?)`;
+      params = [id, JSON.stringify(validated), now, now, this.userId];
+    }
+
+    this.storage.sql.exec(insertSQL, ...params);
+
+    const result = { ...validated, id, createdAt: new Date(now), updatedAt: new Date(now) };
+
+    return result;
+  }
+
+  /**
+   * Find record synchronously for transactions
+   */
+  findByIdSync(id: string): (T & { id: string; createdAt: Date; updatedAt: Date }) | null {
+    let selectSQL: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      selectSQL = `SELECT * FROM "${this.tableName}" WHERE id = ? AND user_id = ? AND organization_id = ? LIMIT 1`;
+      params = [id, this.userId, this.organizationContext];
+    } else {
+      selectSQL = `SELECT * FROM "${this.tableName}" WHERE id = ? AND user_id = ? LIMIT 1`;
+      params = [id, this.userId];
+    }
+
+    const cursor = this.storage.sql.exec(selectSQL, ...params);
+    const results = cursor.toArray();
+
+    if (results.length === 0) {
+      return null;
+    }
+
+    const row = results[0];
+
+    const data = JSON.parse(row.data as string);
+    return {
+      ...data,
+      id: row.id as string,
+      createdAt: new Date(row.created_at as number),
+      updatedAt: new Date(row.updated_at as number)
+    };
+  }
+
+  /**
+   * Update record synchronously for transactions
+   */
+  updateSync(id: string, updates: Partial<T>): T & { id: string; createdAt: Date; updatedAt: Date } {
+    const existing = this.findByIdSync(id);
+    if (!existing) throw new Error('Record not found');
+
+    const merged: any = { ...existing, ...updates };
+    delete merged.id;
+    delete merged.createdAt;
+    delete merged.updatedAt;
+
+    const validated = this.schema.parse(merged);
+    const now = Date.now();
+
+    let updateSQL: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      updateSQL = `UPDATE "${this.tableName}" SET data = ?, updated_at = ? WHERE id = ? AND user_id = ? AND organization_id = ?`;
+      params = [JSON.stringify(validated), now, id, this.userId, this.organizationContext];
+    } else {
+      updateSQL = `UPDATE "${this.tableName}" SET data = ?, updated_at = ? WHERE id = ? AND user_id = ?`;
+      params = [JSON.stringify(validated), now, id, this.userId];
+    }
+
+    this.storage.sql.exec(updateSQL, ...params);
+
+    const result = { ...validated, id, createdAt: existing.createdAt, updatedAt: new Date(now) };
+
+    return result;
+  }
+
+  /**
+   * Delete record synchronously for transactions
+   */
+  deleteSync(id: string): void {
+    let deleteSQL: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      deleteSQL = `DELETE FROM "${this.tableName}" WHERE id = ? AND user_id = ? AND organization_id = ?`;
+      params = [id, this.userId, this.organizationContext];
+    } else {
+      deleteSQL = `DELETE FROM "${this.tableName}" WHERE id = ? AND user_id = ?`;
+      params = [id, this.userId];
+    }
+
+    this.storage.sql.exec(deleteSQL, ...params);
+
+  }
+
+  /**
+   * Count records synchronously for transactions
+   */
+  countSync(): number {
+    let sql: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      sql = `SELECT COUNT(*) as count FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
+      params = [this.userId, this.organizationContext];
+    } else {
+      sql = `SELECT COUNT(*) as count FROM "${this.tableName}" WHERE user_id = ?`;
+      params = [this.userId];
+    }
+
+    const cursor = this.storage.sql.exec(sql, ...params);
+    const results = cursor.toArray();
+    return results.length > 0 ? Number(results[0].count) : 0;
+  }
+
+  /**
+   * Get all records synchronously for transactions
+   */
+  getAllSync(): Array<T & { id: string; createdAt: Date; updatedAt: Date }> {
+    let sql: string;
+    let params: any[];
+
+    if (this.organizationContext) {
+      sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
+      params = [this.userId, this.organizationContext];
+    } else {
+      sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ?`;
+      params = [this.userId];
+    }
+
+    const cursor = this.storage.sql.exec(sql, ...params);
+    const results = cursor.toArray();
+
+    return results.map(row => {
+      const data = JSON.parse(row.data as string);
+      return {
+        ...data,
+        id: row.id as string,
+        createdAt: new Date(row.created_at as number),
+        updatedAt: new Date(row.updated_at as number)
+      };
+    });
+  } 
+// ============ BROADCAST METHODS ============   
+  // Broadcast table change : 
+  // (`table:${this.tableName}`, { type: 'create', data: result }
+  // (`table:${this.tableName}`, { type: 'update', data: result }
+  // (`table:${this.tableName}`, { type: 'delete', data: { id } }
+  broadcastToUser(event: string, data: any) {
+    this.broadcast?.(event, data);
   }
 }

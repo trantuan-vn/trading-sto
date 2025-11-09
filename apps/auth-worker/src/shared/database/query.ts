@@ -1,7 +1,20 @@
 import { z } from 'zod';
 
+type Condition = {
+  path: string;
+  operator: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'includes' | 'in';
+  value: any;
+};
+
+type LogicalCondition = {
+  type: 'and' | 'or';
+  conditions: WhereCondition[];
+};
+
+type WhereCondition = Condition | LogicalCondition;
+
 export class GenericQuery<T> {
-  private conditions: Array<{ path: string; operator: string; value: any }> = [];
+  private conditions: WhereCondition[] = [];
   private orderByClause?: { field: string; direction: 'asc' | 'desc' };
   private limitCount?: number;
   private offsetCount?: number;
@@ -18,8 +31,54 @@ export class GenericQuery<T> {
     return this.getOrganizationContext();
   }
 
-  where(path: string, operator: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'includes', value: any): this {
+  where(path: string, operator: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'includes' | 'in', value: any): this {
     this.conditions.push({ path, operator, value });
+    return this;
+  }
+
+  and(conditions: ((query: GenericQuery<T>) => void) | WhereCondition[]): this {
+    if (typeof conditions === 'function') {
+      const subQuery = new GenericQuery(
+        this.tableName,
+        this.storage,
+        this.schema,
+        this.userId,
+        this.getOrganizationContext
+      );
+      conditions(subQuery);
+      this.conditions.push({
+        type: 'and',
+        conditions: subQuery.conditions
+      });
+    } else {
+      this.conditions.push({
+        type: 'and',
+        conditions
+      });
+    }
+    return this;
+  }
+
+  or(conditions: ((query: GenericQuery<T>) => void) | WhereCondition[]): this {
+    if (typeof conditions === 'function') {
+      const subQuery = new GenericQuery(
+        this.tableName,
+        this.storage,
+        this.schema,
+        this.userId,
+        this.getOrganizationContext
+      );
+      conditions(subQuery);
+      this.conditions.push({
+        type: 'or',
+        conditions: subQuery.conditions
+      });
+    } else {
+      this.conditions.push({
+        type: 'or',
+        conditions
+      });
+    }
     return this;
   }
 
@@ -38,9 +97,75 @@ export class GenericQuery<T> {
     return this;
   }
 
+  private buildWhereClause(conditions: WhereCondition[], params: any[]): string {
+    if (conditions.length === 0) return '';
+
+    const processCondition = (condition: WhereCondition): string => {
+      if ('type' in condition) {
+        // Logical condition (AND/OR)
+        const subClauses = condition.conditions
+          .map(processCondition)
+          .filter(clause => clause !== '');
+        
+        if (subClauses.length === 0) return '';
+        if (subClauses.length === 1) return subClauses[0];
+        
+        const operator = condition.type.toUpperCase();
+        return `(${subClauses.join(` ${operator} `)})`;
+      } else {
+        // Simple condition
+        const jsonPath = `$.${condition.path}`;
+        switch (condition.operator) {
+          case '==':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') = ?`;
+          case '!=':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') != ?`;
+          case '>':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') > ?`;
+          case '<':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') < ?`;
+          case '>=':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') >= ?`;
+          case '<=':
+            params.push(condition.value);
+            return `json_extract(data, '${jsonPath}') <= ?`;
+          case 'includes':
+            params.push(`%${condition.value}%`);
+            return `json_extract(data, '${jsonPath}') LIKE ?`;
+          case 'in':
+            if (!Array.isArray(condition.value)) {
+              throw new Error('IN operator requires an array value');
+            }
+            if (condition.value.length === 0) {
+              return '1=0';
+            }
+            const placeholders = condition.value.map(() => '?').join(', ');
+            params.push(...condition.value);
+            return `json_extract(data, '${jsonPath}') IN (${placeholders})`;
+          default:
+            throw new Error(`Unsupported operator: ${condition.operator}`);
+        }
+      }
+    };
+
+    const clauses = conditions
+      .map(processCondition)
+      .filter(clause => clause !== '');
+
+    if (clauses.length === 0) return '';
+    if (clauses.length === 1) return clauses[0];
+
+    return clauses.join(' AND ');
+  }
+
   async get(): Promise<Array<T & { id: string; createdAt: Date; updatedAt: Date }>> {
     let sql: string;
-    let params: any[];
+    let params: any[] = [];
 
     if (this.organizationContext) {
       sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
@@ -51,36 +176,9 @@ export class GenericQuery<T> {
     }
 
     // Add WHERE conditions
-    if (this.conditions.length > 0) {
-      const whereConditions = this.conditions.map((c) => {
-        const jsonPath = `$.${c.path}`;
-        switch (c.operator) {
-          case '==':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') = ?`;
-          case '!=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') != ?`;
-          case '>':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') > ?`;
-          case '<':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') < ?`;
-          case '>=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') >= ?`;
-          case '<=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') <= ?`;
-          case 'includes':
-            params.push(`%${c.value}%`);
-            return `json_extract(data, '${jsonPath}') LIKE ?`;
-          default:
-            throw new Error(`Unsupported operator: ${c.operator}`);
-        }
-      });
-      sql += ` AND (${whereConditions.join(' AND ')})`;
+    const whereClause = this.buildWhereClause(this.conditions, params);
+    if (whereClause) {
+      sql += ` AND (${whereClause})`;
     }
 
     // Add ORDER BY
@@ -126,7 +224,7 @@ export class GenericQuery<T> {
 
   async count(): Promise<number> {
     let sql: string;
-    let params: any[];
+    let params: any[] = [];
 
     if (this.organizationContext) {
       sql = `SELECT COUNT(*) as count FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
@@ -136,36 +234,9 @@ export class GenericQuery<T> {
       params = [this.userId];
     }
 
-    if (this.conditions.length > 0) {
-      const whereConditions = this.conditions.map((c) => {
-        const jsonPath = `$.${c.path}`;
-        switch (c.operator) {
-          case '==':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') = ?`;
-          case '!=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') != ?`;
-          case '>':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') > ?`;
-          case '<':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') < ?`;
-          case '>=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') >= ?`;
-          case '<=':
-            params.push(c.value);
-            return `json_extract(data, '${jsonPath}') <= ?`;
-          case 'includes':
-            params.push(`%${c.value}%`);
-            return `json_extract(data, '${jsonPath}') LIKE ?`;
-          default:
-            throw new Error(`Unsupported operator: ${c.operator}`);
-        }
-      });
-      sql += ` AND (${whereConditions.join(' AND ')})`;
+    const whereClause = this.buildWhereClause(this.conditions, params);
+    if (whereClause) {
+      sql += ` AND (${whereClause})`;
     }
 
     const cursor = this.storage.sql.exec(sql, ...params);
@@ -173,3 +244,47 @@ export class GenericQuery<T> {
     return results.length > 0 ? Number(results[0].count) : 0;
   }
 }
+
+// 1. Toán tử IN
+// // Tìm các bản ghi có status là 'active' hoặc 'pending'
+// query.where('status', 'in', ['active', 'pending']);
+// // Tìm các bản ghi có category trong danh sách nhất định
+// query.where('category', 'in', ['tech', 'science', 'business']);
+
+// 2. Điều kiện AND
+// Sử dụng mảng điều kiện
+// query.and([
+//   { path: 'status', operator: '==', value: 'active' },
+//   { path: 'priority', operator: '>', value: 5 }
+// ]);
+// // Sử dụng callback function (fluent interface)
+// query.and((q) => {
+//   q.where('status', '==', 'active')
+//    .where('priority', '>', 5);
+// });
+
+// 3. Điều kiện OR
+// Sử dụng mảng điều kiện
+// query.or([
+//   { path: 'status', operator: '==', value: 'active' },
+//   { path: 'priority', operator: '>', value: 8 }
+// ]);
+// // Sử dụng callback function
+// query.or((q) => {
+//   q.where('status', '==', 'active')
+//    .where('priority', '>', 8);
+// });
+
+// 4. Kết hợp các điều kiện phức tạp
+// // (status = 'active' OR priority > 8) AND category = 'tech'
+// query
+//   .and((q) => {
+//     q.where('status', '==', 'active')
+//      .or((subQ) => {
+//        subQ.where('priority', '>', 8);
+//      });
+//   })
+//   .where('category', '==', 'tech');
+
+// // SQL sẽ tạo ra:
+// // WHERE user_id = ? AND ((json_extract(data, '$.status') = ? OR json_extract(data, '$.priority') > ?) AND json_extract(data, '$.category') = ?)
