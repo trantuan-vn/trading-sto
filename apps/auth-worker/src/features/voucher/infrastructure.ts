@@ -5,16 +5,15 @@ import {
   ValidateVoucherRequest,
   IVoucherInfrastructureService,
   VoucherSchema,
-  VoucherUsageSchema
+//   VoucherUsageSchema
 } from './domain';
 
 export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfrastructureService {
 
     const vouchers = userDO.table('vouchers', VoucherSchema, { userScoped: true });
-    const voucherUsages = userDO.table('voucher_usages', VoucherUsageSchema, { userScoped: true });
-    
+    // const voucherUsages = userDO.table('voucher_usages', VoucherUsageSchema, { userScoped: true });
     // Helper methods
-    async function validateServiceVoucherInternal(voucher: any, basePrice: number, serviceId?: string, customerId?: string): Promise<any> {
+    async function validateServiceVoucherInternal(voucher: any, orderAmount: number, currentCalls: number, serviceId?: string): Promise<any> {
         const now = new Date();
         const startDate = new Date(voucher.startDate);
         const endDate = new Date(voucher.endDate);
@@ -44,7 +43,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         }
 
         // Check minimum order amount
-        if (voucher.minOrderAmount && basePrice < voucher.minOrderAmount) {
+        if (voucher.minOrderAmount && orderAmount < voucher.minOrderAmount) {
             return { 
                 isValid: false, 
                 errorMessage: `Minimum order amount is ${voucher.minOrderAmount.toLocaleString()}` 
@@ -57,13 +56,20 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 return { isValid: false, errorMessage: 'Voucher is not applicable for this service' };
             }
         }
-
-        // Check customer-specific vouchers
-        if (voucher.applicableUsers && voucher.applicableUsers.length > 0 && customerId) {
-            if (!voucher.applicableUsers.includes(customerId)) {
-                return { isValid: false, errorMessage: 'Voucher is not applicable for this customer' };
+        // Kiểm tra điều kiện usage-based
+        if (voucher.conditions && voucher.type === 'USAGE_BASED') {
+            const { minUsage, maxCalls } = voucher.conditions;
+            
+            // Kiểm tra minUsage (số lượng sử dụng tối thiểu)
+            if (minUsage !== undefined && currentCalls < minUsage) {
+                return { isValid: false, errorMessage: `Minimum usage is ${minUsage}` };
             }
-        }
+            
+            // Kiểm tra maxCalls (số lượng calls tối đa để được giảm giá)
+            if (maxCalls !== undefined && currentCalls > maxCalls) {
+                return { isValid: false, errorMessage: `Maximum calls is ${maxCalls}` };
+            }
+        }        
 
         return { 
             isValid: true,
@@ -78,7 +84,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         };
     }
 
-    async function validateUserVoucherInternal(voucher: any, basePrice: number, userId?: string, userRole?: string): Promise<any> {
+    async function validateUserVoucherInternal(voucher: any, orderAmount: number, currentCalls: number, userId?: string, userRole?: string): Promise<any> {
         const now = new Date();
         const startDate = new Date(voucher.startDate);
         const endDate = new Date(voucher.endDate);
@@ -108,7 +114,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         }
 
         // Check minimum order amount
-        if (voucher.minOrderAmount && basePrice < voucher.minOrderAmount) {
+        if (voucher.minOrderAmount && orderAmount < voucher.minOrderAmount) {
             return { 
                 isValid: false, 
                 errorMessage: `Minimum order amount is ${voucher.minOrderAmount.toLocaleString()}` 
@@ -129,6 +135,22 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
             }
         }
 
+        // Kiểm tra điều kiện usage-based
+        if (voucher.conditions && voucher.type === 'USAGE_BASED') {
+            const { minUsage, maxCalls } = voucher.conditions;
+            
+            // Kiểm tra minUsage (số lượng sử dụng tối thiểu)
+            if (minUsage !== undefined && currentCalls < minUsage) {
+                return { isValid: false, errorMessage: `Minimum usage is ${minUsage}` };
+            }
+            
+            // Kiểm tra maxCalls (số lượng calls tối đa để được giảm giá)
+            if (maxCalls !== undefined && currentCalls > maxCalls) {
+                return { isValid: false, errorMessage: `Maximum calls is ${maxCalls}` };
+            }
+        }        
+
+
         return { 
             isValid: true,
             voucher: {
@@ -142,7 +164,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         };
     }
 
-    function calculateDiscount(voucher: any, basePrice: number): number {
+    function calculateDiscount(voucher: any, basePrice: number, currentCalls: number): number {
         let discount = 0;
 
         switch (voucher.type) {
@@ -159,7 +181,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
 
             case 'USAGE_BASED':
                 // Discount based on service usage
-                discount = calculateUsageBasedDiscount(voucher, basePrice);
+                discount = calculateUsageBasedDiscount(voucher, basePrice, currentCalls);
                 break;
 
             case 'TIERED':
@@ -170,10 +192,24 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         return Math.min(discount, basePrice); // Cannot discount more than base price
     }
 
-    function calculateUsageBasedDiscount(voucher: any, basePrice: number): number {
-        // Implementation for usage-based discounts
-        // Ví dụ: giảm giá dựa trên số lượng API calls đã sử dụng
-        return voucher.discountValue; // Simplified for now
+    function calculateUsageBasedDiscount(voucher: any, basePrice: number, currentCalls: number): number {
+        // Với USAGE_BASED, có thể tính discount dựa trên currentCalls
+        if (voucher.conditions?.minUsage && voucher.conditions?.maxCalls) {
+            const { minUsage, maxCalls } = voucher.conditions;
+            
+            // Ví dụ: discount tăng theo số lượng usage
+            if (currentCalls >= minUsage && currentCalls <= maxCalls) {
+            const usageRange = maxCalls - minUsage;
+            const currentPosition = currentCalls - minUsage;
+            const discountMultiplier = currentPosition / usageRange;
+            
+            // Discount tăng dần từ 0% đến discountValue%
+            return (basePrice * (voucher.discountValue * discountMultiplier)) / 100;
+            }
+        }
+        
+        // Fallback: trả về discountValue cố định
+        return voucher.discountValue;
     }
 
     function calculateTieredDiscount(voucher: any, basePrice: number): number {
@@ -222,7 +258,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         },
 
         async applyServiceVoucher(request: ApplyVoucher): Promise<any> {
-            const { voucherCode, basePrice, serviceId, customerId, userId } = request;
+            const { voucherCode, basePrice, orderAmount, serviceId } = request;
             
             // 1. Find voucher by code
             const voucher = await vouchers.where('code', '==', voucherCode.toUpperCase()).first();
@@ -231,27 +267,27 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
             }
 
             // 2. Validate voucher for service
-            const validation = await validateServiceVoucherInternal(voucher, basePrice, serviceId, customerId);
+            const validation = await validateServiceVoucherInternal(voucher, orderAmount, request.currentCalls || 0, serviceId);
             if (!validation.isValid) {
                 throw new Error(validation.errorMessage || 'Voucher is not applicable for this service');
             }
 
             // 3. Calculate discount
-            const discountAmount = calculateDiscount(voucher, basePrice);
+            const discountAmount = calculateDiscount(voucher, basePrice, request.currentCalls || 0);
 
-            // 4. Record usage
-            await voucherUsages.create({
-                voucherId: voucher.id,
-                voucherCode: voucher.code,
-                targetType: 'SERVICE',
-                serviceId: serviceId,
-                userId: userId,
-                customerId: customerId,
-                basePrice: basePrice,
-                discountAmount: discountAmount,
-                finalPrice: basePrice - discountAmount,
-                appliedAt: new Date().toISOString(),
-            });
+            // // 4. Record usage
+            // await voucherUsages.create({
+            //     voucherId: voucher.id,
+            //     voucherCode: voucher.code,
+            //     targetType: 'SERVICE',
+            //     serviceId: serviceId,
+            //     userId: userId,
+            //     customerId: customerId,
+            //     basePrice: basePrice,
+            //     discountAmount: discountAmount,
+            //     finalPrice: basePrice - discountAmount,
+            //     appliedAt: new Date().toISOString(),
+            // });
 
             // 5. Update voucher usage count
             await vouchers.update(voucher.id, {
@@ -269,12 +305,11 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 originalAmount: basePrice,
                 discountAmount: discountAmount,
                 finalAmount: basePrice - discountAmount,
-                appliedAt: new Date().toISOString(),
             };
         },
 
         async applyUserVoucher(request: ApplyVoucher): Promise<any> {
-            const { voucherCode, basePrice, userId, userRole, customerId } = request;
+            const { voucherCode, basePrice, orderAmount, userId, userRole } = request;
             
             // 1. Find voucher by code
             const voucher = await vouchers.where('code', '==', voucherCode.toUpperCase()).first();
@@ -283,27 +318,27 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
             }
 
             // 2. Validate voucher for user
-            const validation = await validateUserVoucherInternal(voucher, basePrice, userId, userRole);
+            const validation = await validateUserVoucherInternal(voucher, orderAmount, request.currentCalls || 0, userId, userRole);
             if (!validation.isValid) {
                 throw new Error(validation.errorMessage || 'Voucher is not applicable for this user');
             }
 
             // 3. Calculate discount
-            const discountAmount = calculateDiscount(voucher, basePrice);
+            const discountAmount = calculateDiscount(voucher, basePrice, request.currentCalls || 0);
 
-            // 4. Record usage
-            await voucherUsages.create({
-                voucherId: voucher.id,
-                voucherCode: voucher.code,
-                targetType: 'USER',
-                userId: userId,
-                userRole: userRole,
-                customerId: customerId,
-                basePrice: basePrice,
-                discountAmount: discountAmount,
-                finalPrice: basePrice - discountAmount,
-                appliedAt: new Date().toISOString(),
-            });
+            // // 4. Record usage
+            // await voucherUsages.create({
+            //     voucherId: voucher.id,
+            //     voucherCode: voucher.code,
+            //     targetType: 'USER',
+            //     userId: userId,
+            //     userRole: userRole,
+            //     customerId: customerId,
+            //     basePrice: basePrice,
+            //     discountAmount: discountAmount,
+            //     finalPrice: basePrice - discountAmount,
+            //     appliedAt: new Date().toISOString(),
+            // });
 
             // 5. Update voucher usage count
             await vouchers.update(voucher.id, {
@@ -321,7 +356,6 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 originalAmount: basePrice,
                 discountAmount: discountAmount,
                 finalAmount: basePrice - discountAmount,
-                appliedAt: new Date().toISOString(),
             };
         },
 
@@ -340,7 +374,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
         },
 
         async validateServiceVoucher(request: ValidateVoucherRequest): Promise<any> {
-            const { voucherCode, basePrice, serviceId, customerId } = request;
+            const { voucherCode, orderAmount, currentCalls, serviceId } = request;
             
             const voucher = await vouchers.where('code', '==', voucherCode.toUpperCase()).first();
             if (!voucher) {
@@ -350,11 +384,11 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 };
             }
 
-            return await validateServiceVoucherInternal(voucher, basePrice, serviceId, customerId);
+            return await validateServiceVoucherInternal(voucher, orderAmount, currentCalls || 0, serviceId);
         },
 
         async validateUserVoucher(request: ValidateVoucherRequest): Promise<any> {
-            const { voucherCode, basePrice, userId, userRole } = request;
+            const { voucherCode, orderAmount, currentCalls, userId, userRole } = request;
             
             const voucher = await vouchers.where('code', '==', voucherCode.toUpperCase()).first();
             if (!voucher) {
@@ -364,7 +398,7 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 };
             }
 
-            return await validateUserVoucherInternal(voucher, basePrice, userId, userRole);
+            return await validateUserVoucherInternal(voucher, orderAmount, currentCalls || 0, userId, userRole);
         },
 
         async updateVoucherStatus(voucherId: string, status: string): Promise<any> {
@@ -373,16 +407,17 @@ export function createVoucherInfrastructureService(userDO: UserDO): IVoucherInfr
                 throw new Error('Voucher not found');
             }
 
-            await vouchers.update(voucherId, VoucherSchema.parse({ ...voucher, status }));
+            await vouchers.update(voucherId, { status: status as "ACTIVE" | "INACTIVE" | "EXPIRED" });
+
             return { ...voucher, status, id: voucherId };
         },
 
-        async getVoucherUsage(voucherId: string): Promise<any[]> {
-            return await voucherUsages
-                .where('voucherId', '==', voucherId)
-                .orderBy('appliedAt', 'desc')
-                .get();
-        },
+        // async getVoucherUsage(voucherId: string): Promise<any[]> {
+        //     return await voucherUsages
+        //         .where('voucherId', '==', voucherId)
+        //         .orderBy('appliedAt', 'desc')
+        //         .get();
+        // },
 
         async getAvailableServiceVouchers(serviceId?: string, basePrice?: number): Promise<any[]> {
             const now = new Date().toISOString();

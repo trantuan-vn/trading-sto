@@ -18,7 +18,7 @@ export interface IVoucherApplicationService {
   validateServiceVoucher(identifier: string, request: ValidateVoucherRequest): Promise<any>;
   validateUserVoucher(identifier: string, request: ValidateVoucherRequest): Promise<any>;
   updateVoucherStatus(identifier: string, voucherId: string, status: string): Promise<Voucher>;
-  getVoucherUsage(identifier: string, voucherId: string): Promise<any[]>;
+  // getVoucherUsage(identifier: string, voucherId: string): Promise<any[]>;
   getAvailableServiceVouchers(identifier: string, serviceId?: string, basePrice?: number): Promise<Voucher[]>;
   getAvailableUserVouchers(identifier: string, userId?: string, userRole?: string, basePrice?: number): Promise<Voucher[]>;
 }
@@ -133,11 +133,12 @@ export function createVoucherApplicationService(c: Context, bindingName: string)
       };
     },
 
-    async getVoucherUsage(identifier: string, voucherId: string): Promise<any[]> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const voucherInfra = createVoucherInfrastructureService(userDO);
-      return await voucherInfra.getVoucherUsage(voucherId);
-    },
+    // async getVoucherUsage(identifier: string, voucherId: string): Promise<any[]> {
+    //   const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+    //   const sysDO = getIdFromName<UserDO>(c, 'system', bindingName);
+    //   const voucherInfra = createVoucherInfrastructureService(userDO, sysDO);
+    //   return await voucherInfra.getVoucherUsage(voucherId);
+    // },
 
     async getAvailableServiceVouchers(identifier: string, serviceId?: string, basePrice?: number): Promise<any[]> {
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);

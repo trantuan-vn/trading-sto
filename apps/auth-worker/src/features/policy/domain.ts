@@ -82,7 +82,6 @@ export const ServicePriceCalculationRequestSchema = z.object({
   currentCalls: z.number().min(0).optional(),
   maxCalls: z.number().min(0).optional(),
   quantity: z.number().min(1).optional().default(1),
-  customerId: z.string().optional(),
   currency: z.string().optional().default('VND'),
 });
 
@@ -90,7 +89,10 @@ export const UserPriceCalculationRequestSchema = z.object({
   basePrice: z.number().min(0),
   userId: z.string(),
   userRole: z.enum(['member', 'admin']).optional(),
-  userGroup: z.string().optional(),
+  serviceId: z.string(),
+  serviceName: z.string().optional(),
+  currentCalls: z.number().min(0).optional(),
+  maxCalls: z.number().min(0).optional(),
   quantity: z.number().min(1).optional().default(1),
   currency: z.string().optional().default('VND'),
 });

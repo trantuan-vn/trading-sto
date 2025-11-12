@@ -10,6 +10,7 @@ export function createEkycRoutes(bindingName: string) {
   // Document recognition endpoint
   app.post('/recognize-document', async (c) => {
     try {
+      
       // Lấy full URL
       const fullUrl = new URL(c.req.url);
       const endpoint = fullUrl.pathname; 

@@ -1,72 +1,56 @@
 import { z } from 'zod';
 
 // Schemas
-export const OrderItemSchema = z.object({
-  orderId: z.string(),
-  targetType: z.enum(['SERVICE', 'USER']),
-  // Service fields (dùng cho cả SERVICE và USER)
-  serviceId: z.string(),
-  serviceName: z.string(),
-  basePrice: z.number().min(0),
-  quantity: z.number().min(1),
-  currentCalls: z.number().min(0).optional(),
-  maxCalls: z.number().min(0).optional(),
-  // Pricing results
-  finalUnitPrice: z.number().min(0).optional(),
-  totalPrice: z.number().min(0).optional(),
-  appliedPricingPolicyId: z.string().optional(),
-});
-
 export const OrderSchema = z.object({
   orderCode: z.string(),
-  targetType: z.enum(['SERVICE', 'USER']),
-  // Customer info
-  customerId: z.string(),
-  customerName: z.string(),
-  customerEmail: z.string().email().optional(),
-  customerPhone: z.string().optional(),
-  // User info (dùng cho USER targetType)
-  userId: z.string().optional(),
-  userRole: z.enum(['member', 'admin']).optional(),
-  userGroup: z.string().optional(),
   // Pricing
-  subtotalAmount: z.number().min(0),
-  discountAmount: z.number().min(0).default(0),
-  totalAmount: z.number().min(0),
-  finalAmount: z.number().min(0),
-  // Applied discounts
-  appliedVoucherCode: z.string().optional(),
-  appliedVoucherDiscount: z.number().min(0).default(0),
+  subtotalAmount: z.number().min(0), // total(item.basePrice*item.quantity)
+  discountAmount: z.number().min(0).default(0), // total(item.discountAmount*item.quantity)
+  finalAmount: z.number().min(0), // total(item.finalAmount*item.quantity)
   // Status
   status: z.enum(['PENDING', 'CONFIRMED', 'PROCESSING', 'COMPLETED', 'CANCELLED']),
   // Metadata
+  currency: z.string().default('VND'),
   notes: z.string().optional(),
   internalNotes: z.string().optional(),
 });
 
-export const OrderDiscountSchema = z.object({
+export const OrderItemSchema = z.object({
   orderId: z.string(),
-  discountType: z.enum(['PRICE_POLICY', 'VOUCHER', 'MANUAL']),
+  serviceId: z.string(),
+  basePrice: z.number().min(0),
+  discountAmount: z.number().min(0).default(0), // total(orderItemDiscount.discountAmount)
+  finalAmount: z.number().min(0),
+  quantity: z.number().min(1),
+});
+
+
+export const OrderItemDiscountSchema = z.object({
+  orderItemId: z.string(),
+  discountType: z.enum(['PRICE_POLICY', 'VOUCHER']),
   discountSource: z.string(),
-  discountAmount: z.number().min(0),
+  discountAmount: z.number().min(0), // total(appliedPolicies.discount)
+  appliedPolicies: z.array(z.object({
+    policyId: z.string(),
+    policyName: z.string(),
+    discount: z.number(),
+    type: z.string(),
+  })).optional(),  
+  appliedVoucherCode: z.string().optional(),
   description: z.string(),
-  appliedAt: z.string().default(() => new Date().toISOString()),
 });
 
 // Request Schemas
+export const CreateOrderItemSchema = z.object({
+  serviceId: z.string(),
+  basePrice: z.number().min(0),
+  quantity: z.number().min(1),
+});
+
 export const CreateOrderSchema = z.object({
-  targetType: z.enum(['SERVICE', 'USER']),
-  // Customer info
-  customerId: z.string(),
-  customerName: z.string(),
-  customerEmail: z.string().email().optional(),
-  customerPhone: z.string().optional(),
-  // User info (dùng cho USER targetType)
-  userId: z.string().optional(),
-  userRole: z.enum(['member', 'admin']).optional(),
-  userGroup: z.string().optional(),
   // Items (chỉ có service)
-  items: z.array(OrderItemSchema).min(1),
+  items: z.array(CreateOrderItemSchema).min(1),
+  currency: z.string().default('VND'),
   voucherCode: z.string().optional(),
   notes: z.string().optional(),
 });
@@ -82,22 +66,19 @@ export const ApplyVoucherToOrderSchema = z.object({
 
 // Chỉ cần MỘT schema cho tính toán order
 export const CalculateOrderRequestSchema = z.object({
-  targetType: z.enum(['SERVICE', 'USER']),
-  // Customer info (dùng cho SERVICE targetType)
-  customerId: z.string().optional(),
   // User info (dùng cho USER targetType)  
   userId: z.string().optional(),
   userRole: z.enum(['member', 'admin']).optional(),
-  userGroup: z.string().optional(),
   // Items (chỉ có service)
-  items: z.array(OrderItemSchema).min(1),
+  items: z.array(CreateOrderItemSchema).min(1),
   voucherCode: z.string().optional(),
+  currency: z.string().default('VND'),
 });
 
 // Types
 export type Order = z.infer<typeof OrderSchema>;
 export type OrderItem = z.infer<typeof OrderItemSchema>;
-export type OrderDiscount = z.infer<typeof OrderDiscountSchema>;
+export type OrderItemDiscount = z.infer<typeof OrderItemDiscountSchema>;
 export type CreateOrder = z.infer<typeof CreateOrderSchema>;
 export type UpdateOrderStatus = z.infer<typeof UpdateOrderStatusSchema>;
 export type ApplyVoucherToOrder = z.infer<typeof ApplyVoucherToOrderSchema>;
@@ -105,19 +86,16 @@ export type CalculateOrderRequest = z.infer<typeof CalculateOrderRequestSchema>;
 
 export interface OrderDetail extends Order {
   items: OrderItem[];
-  discounts: OrderDiscount[];
+  discounts: OrderItemDiscount[];
 }
 
 // Domain Interfaces
 export interface IOrderInfrastructureService {
-  createOrder(request: CreateOrder): Promise<any>;
+  createOrder(userId: string, userRole: string, request: CreateOrder): Promise<any>;
   getOrders(filters: any): Promise<any[]>;
   getOrderDetail(orderId: string): Promise<any>;
   updateOrderStatus(orderId: string, request: UpdateOrderStatus): Promise<any>;
-  applyVoucherToOrder(orderId: string, request: ApplyVoucherToOrder): Promise<any>;
-  calculateOrder(request: CalculateOrderRequest): Promise<any>;
   cancelOrder(orderId: string): Promise<any>;
-  getAvailableVouchersForOrder(orderId: string): Promise<any[]>;
 }
 
 // VÍ DỤ SỬ DỤNG:

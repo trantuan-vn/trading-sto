@@ -14,7 +14,7 @@ export function createOrderRoutes(bindingName: string) {
       const body = await c.req.json();
       const request = CreateOrderSchema.parse(body);
       const orderApp = createOrderApplicationService(c, bindingName);
-      const result = await orderApp.createOrder(user.identifier, request);
+      const result = await orderApp.createOrder(user, request);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to create order');
@@ -69,37 +69,6 @@ export function createOrderRoutes(bindingName: string) {
     }
   });
 
-  // Áp dụng voucher vào đơn hàng
-  app.post('/orders/:orderId/apply-voucher', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const orderId = c.req.param('orderId');
-      const body = await c.req.json();
-      const request = ApplyVoucherToOrderSchema.parse(body);
-      const orderApp = createOrderApplicationService(c, bindingName);
-      const result = await orderApp.applyVoucherToOrder(user.identifier, orderId, request);
-      return c.json(result);
-    } catch (e) {
-      const { errorResponse, status } = handleError(e, 'Failed to apply voucher');
-      return c.json(errorResponse, status);
-    }
-  });
-
-  // Tính toán giá đơn hàng (preview)
-  app.post('/orders/calculate', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const body = await c.req.json();
-      const request = CalculateOrderRequestSchema.parse(body);
-      const orderApp = createOrderApplicationService(c, bindingName);
-      const result = await orderApp.calculateOrder(user.identifier, request);
-      return c.json(result);
-    } catch (e) {
-      const { errorResponse, status } = handleError(e, 'Failed to calculate order');
-      return c.json(errorResponse, status);
-    }
-  });
-
   // Hủy đơn hàng
   app.post('/orders/:orderId/cancel', async (c) => {
     try {
@@ -110,20 +79,6 @@ export function createOrderRoutes(bindingName: string) {
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to cancel order');
-      return c.json(errorResponse, status);
-    }
-  });
-
-  // Lấy danh sách voucher khả dụng cho order
-  app.get('/orders/:orderId/available-vouchers', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const orderId = c.req.param('orderId');
-      const orderApp = createOrderApplicationService(c, bindingName);
-      const result = await orderApp.getAvailableVouchersForOrder(user.identifier, orderId);
-      return c.json(result);
-    } catch (e) {
-      const { errorResponse, status } = handleError(e, 'Failed to get available vouchers');
       return c.json(errorResponse, status);
     }
   });

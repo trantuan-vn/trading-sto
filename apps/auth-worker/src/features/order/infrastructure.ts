@@ -9,139 +9,155 @@ import {
   IOrderInfrastructureService,
   OrderSchema,
   OrderItemSchema,
-  OrderDiscountSchema
+  OrderItemDiscountSchema
 } from './domain';
+
+import { ServiceSchema } from '../service/domain';
+import { UserSchema } from '../auth/domain';
 
 export function createOrderInfrastructureService(userDO: UserDO, context: any, bindingName: string): IOrderInfrastructureService {
 
     const orders = userDO.table('orders', OrderSchema, { userScoped: true });
     const orderItems = userDO.table('order_items', OrderItemSchema, { userScoped: true });
-    const orderDiscounts = userDO.table('order_discounts', OrderDiscountSchema, { userScoped: true });
+    const orderDiscounts = userDO.table('order_discounts', OrderItemDiscountSchema, { userScoped: true });
+
+    const services = userDO.table('services', ServiceSchema, { userScoped: true });
 
     // Helper method duy nhất cho tính toán order
-    async function calculateOrderTotal(request: CalculateOrderRequest, priceApp: any, voucherApp: any): Promise<any> {
-      let subtotalAmount = 0;
-      const pricedItems = [];
-      const appliedDiscounts = [];
-
-      // 1. Tính subtotal và áp dụng price policies cho từng service
+    async function calculateOrderTotal(userId: string, userRole: string, request: CalculateOrderRequest, priceApp: any, voucherApp: any): Promise<any[]> {
+      const results = [];
+      const orderAmount = request.items.reduce((acc, item) => acc + item.basePrice * item.quantity, 0);      
+      
       for (const item of request.items) {
-        const itemTotal = item.basePrice * item.quantity;
-        subtotalAmount += itemTotal;
-
-        // Áp dụng price policies cho service dựa trên targetType
-        try {
-          let priceResult;
-          
-          if (request.targetType === 'SERVICE') {
-            // Tính giá cho service order (customer mua service)
-            priceResult = await priceApp.calculateServicePrice('system', {
-              basePrice: item.basePrice,
-              serviceId: item.serviceId,
-              serviceName: item.serviceName,
-              currentCalls: item.currentCalls,
-              maxCalls: item.maxCalls,
-              quantity: item.quantity,
-              customerId: request.customerId,
-              userId: request.userId,
-            });
-          } else {
-            // Tính giá cho user order (user cá nhân mua service)
-            priceResult = await priceApp.calculateUserPrice('system', {
-              basePrice: item.basePrice,
-              userId: request.userId,
-              userRole: request.userRole,
-              userGroup: request.userGroup,
-              quantity: item.quantity,
-            });
-          }
-
-          const finalUnitPrice = priceResult.finalPrice;
-          pricedItems.push({
-            serviceId: item.serviceId,
-            originalUnitPrice: item.basePrice,
-            finalUnitPrice: finalUnitPrice,
-            appliedPolicyId: priceResult.appliedPolicies[0]?.policyId,
-            discount: item.basePrice - finalUnitPrice,
-          });
-
-          // Ghi log discounts từ price policies
-          for (const policy of priceResult.appliedPolicies) {
-            appliedDiscounts.push({
-              type: 'PRICE_POLICY',
-              source: policy.policyName,
-              amount: policy.discount * item.quantity,
-              description: `${policy.policyName} - ${item.serviceName}`,
-            });
-          }
-        } catch (error) {
-          // Nếu không áp dụng được price policy, dùng giá gốc
-          pricedItems.push({
-            serviceId: item.serviceId,
-            originalUnitPrice: item.basePrice,
-            finalUnitPrice: item.basePrice,
-            discount: 0,
-          });
+        const service = await services
+          .where('id','==', item.serviceId)
+          .where('isActive', '==', 'true')
+          .where('expiresAt', '>=', new Date().toISOString())
+          .first();
+        
+        if (!service) {
+          throw new Error('Service not found');
         }
-      }
 
-      // 2. Tính lại subtotal sau khi áp dụng price policies
-      const subtotalAfterPolicies = pricedItems.reduce((sum, item) => {
-        const foundItem = request.items.find((i: any) => i.serviceId === item.serviceId);
-        const quantity = foundItem?.quantity ?? 1;
-        return sum + item.finalUnitPrice * quantity;
-      }, 0);
+        const servicePriceResult = await priceApp.calculateServicePrice('system', {
+          serviceId: service.id,
+          basePrice: item.basePrice,
+          quantity: item.quantity,
+          currency: request.currency,
+          maxCalls: service.maxCalls,
+          currentCalls: service.currentCalls,
+          serviceName: service.name
+        });
 
-      // 3. Áp dụng voucher nếu có
-      let voucherDiscount = 0;
-      if (request.voucherCode) {
-        try {
-          let voucherResult;
-          
-          if (request.targetType === 'SERVICE') {
-            // Áp dụng voucher service
-            voucherResult = await voucherApp.applyServiceVoucher('system', {
-              voucherCode: request.voucherCode,
-              basePrice: subtotalAfterPolicies,
-              serviceId: request.items[0]?.serviceId,
-              customerId: request.customerId,
-              userId: request.userId,
-            });
-          } else {
-            // Áp dụng voucher user
-            voucherResult = await voucherApp.applyUserVoucher('system', {
-              voucherCode: request.voucherCode,
-              basePrice: subtotalAfterPolicies,
-              userId: request.userId,
-              userRole: request.userRole,
-            });
-          }
+        const userPriceResult = await priceApp.calculateUserPrice('system', {
+          basePrice: item.basePrice,
+          quantity: item.quantity,
+          currency: request.currency,
+          userId: userId,
+          userRole: userRole
+        });
 
-          voucherDiscount = voucherResult.discountAmount;
-          appliedDiscounts.push({
-            type: 'VOUCHER',
-            source: request.voucherCode,
-            amount: voucherDiscount,
-            description: `${request.targetType} Voucher: ${request.voucherCode}`,
-          });
-        } catch (error) {
-          console.warn('Failed to apply voucher:', error);
+        const serviceVoucherResult = await voucherApp.applyServiceVoucher('system', {
+          voucherCode: request.voucherCode,
+          basePrice: item.basePrice,
+          orderAmount: orderAmount,
+          serviceId: service.id,
+          currentCalls: service.currentCalls,
+          userId: userId,
+          userRole: userRole
+        });
+
+        const userVoucherResult = await voucherApp.applyUserVoucher('system', {
+          voucherCode: request.voucherCode,
+          basePrice: item.basePrice,
+          orderAmount: orderAmount,
+          serviceId: service.id,
+          currentCalls: service.currentCalls,
+          userId: userId,
+          userRole: userRole
+        });
+
+        // Tạo object chứa các discount lớn hơn 0
+        const discounts: {
+          servicePriceDiscount?: {
+            amount: number;
+            type: string;
+            appliedPolicies: any[];
+          };
+          userPriceDiscount?: {
+            amount: number;
+            type: string;
+            appliedPolicies: any[];
+          };
+          serviceVoucherDiscount?: {
+            amount: number;
+            type: string;
+            voucher: any;
+          };
+          userVoucherDiscount?: {
+            amount: number;
+            type: string;
+            voucher: any;
+          };
+        } = {};
+        
+        if (servicePriceResult.totalDiscount > 0) {
+          discounts.servicePriceDiscount = {
+            amount: servicePriceResult.totalDiscount,
+            type: 'service_price',
+            appliedPolicies: servicePriceResult.appliedPolicies
+          };
         }
-      }
+        
+        if (userPriceResult.totalDiscount > 0) {
+          discounts.userPriceDiscount = {
+            amount: userPriceResult.totalDiscount,
+            type: 'user_price',
+            appliedPolicies: userPriceResult.appliedPolicies
+          };
+        }
+        
+        if (serviceVoucherResult.discountAmount > 0) {
+          discounts.serviceVoucherDiscount = {
+            amount: serviceVoucherResult.discountAmount,
+            type: 'service_voucher',
+            voucher: serviceVoucherResult.voucher
+          };
+        }
+        
+        if (userVoucherResult.discountAmount > 0) {
+          discounts.userVoucherDiscount = {
+            amount: userVoucherResult.discountAmount,
+            type: 'user_voucher',
+            voucher: userVoucherResult.voucher
+          };
+        }
 
-      // 4. Tính tổng final amount
-      const totalDiscount = appliedDiscounts.reduce((sum, discount) => sum + discount.amount, 0);
-      const finalAmount = subtotalAfterPolicies - voucherDiscount;
+        results.push({
+          serviceId: item.serviceId,
+          basePrice: item.basePrice,
+          quantity: item.quantity,
+          servicePrice: {
+            finalPrice: servicePriceResult.finalPrice,
+            totalDiscount: servicePriceResult.totalDiscount
+          },
+          userPrice: {
+            finalPrice: userPriceResult.finalPrice,
+            totalDiscount: userPriceResult.totalDiscount
+          },
+          serviceVoucher: {
+            finalAmount: serviceVoucherResult.finalAmount,
+            discountAmount: serviceVoucherResult.discountAmount
+          },
+          userVoucher: {
+            finalAmount: userVoucherResult.finalAmount,
+            discountAmount: userVoucherResult.discountAmount
+          },
+          discounts: Object.keys(discounts).length > 0 ? discounts : undefined
+        });
+      }      
 
-      return {
-        targetType: request.targetType,
-        subtotalAmount: subtotalAfterPolicies,
-        totalDiscount: totalDiscount,
-        voucherDiscount: voucherDiscount,
-        finalAmount: Math.max(0, finalAmount),
-        pricedItems: pricedItems,
-        appliedDiscounts: appliedDiscounts,
-      };
+      return results;
     }
 
     function generateOrderCode(): string {
@@ -151,31 +167,34 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
     }
 
     return {
-      async createOrder(request: CreateOrder): Promise<any> {
+      async createOrder(userId: string, userRole: string, request: CreateOrder): Promise<any> {
         // 1. Tính toán giá với Price Service và Voucher Service
         const priceApp = createPriceApplicationService(context, bindingName);
         const voucherApp = createVoucherApplicationService(context, bindingName);
 
-        const calculationResult = await calculateOrderTotal(request, priceApp, voucherApp);
+        const calculationResult = await calculateOrderTotal(userId, userRole, request, priceApp, voucherApp);
 
         // 2. Tạo order record
+        const subtotalAmount = calculationResult.reduce((total: number, item: any) => {
+          return total + item.basePrice * item.quantity;
+        }, 0);
+        const discountAmount = calculationResult.reduce((total: number, item: any) => {
+          return total + (item.servicePrice.discountAmount + item.userPrice.discountAmount 
+                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount);
+        }, 0);  
+        const finalAmount = calculationResult.reduce((total: number, item: any) => {
+          return total + (item.basePrice - (item.servicePrice.discountAmount + item.userPrice.discountAmount 
+                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount) ) * item.quantity;
+        }, 0);         
+
         const orderData = OrderSchema.parse({
           orderCode: generateOrderCode(),
-          targetType: request.targetType,
-          customerId: request.customerId,
-          userId: request.userId,
-          customerName: request.customerName,
-          customerEmail: request.customerEmail,
-          customerPhone: request.customerPhone,
-          userRole: request.userRole,
-          // Thông tin giá
-          subtotalAmount: calculationResult.subtotalAmount,
-          discountAmount: calculationResult.totalDiscount,
-          totalAmount: calculationResult.finalAmount,
-          finalAmount: calculationResult.finalAmount,
+          subtotalAmount: subtotalAmount,
+          discountAmount: discountAmount, 
+          finalAmount: finalAmount,
           // Thông tin áp dụng
+          currency: request.currency,
           appliedVoucherCode: request.voucherCode,
-          appliedVoucherDiscount: calculationResult.voucherDiscount,        
           status: 'PENDING',
           notes: request.notes,
         });
@@ -183,40 +202,59 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
         const orderRecord = await orders.create(orderData);
 
         // 3. Tạo order items (chỉ có service)
-        for (const item of request.items) {
-          const pricedItem = calculationResult.pricedItems.find((p: any) => p.serviceId === item.serviceId);
+        for (const item of calculationResult) {
           
-          await orderItems.create({
-            orderId: orderRecord.id,
-            targetType: request.targetType,
+          const orderItem= await orderItems.create({
             serviceId: item.serviceId,
-            serviceName: item.serviceName,
             basePrice: item.basePrice,
-            finalUnitPrice: pricedItem?.finalUnitPrice || item.basePrice,
             quantity: item.quantity,
-            totalPrice: (pricedItem?.finalUnitPrice || item.basePrice) * item.quantity,
-            currentCalls: item.currentCalls,
-            maxCalls: item.maxCalls,
-            appliedPricingPolicyId: pricedItem?.appliedPolicyId,
+            finalAmount: item.basePrice - (item.servicePrice.discountAmount + item.userPrice.discountAmount 
+                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount),
+            discountAmount: (item.servicePrice.discountAmount + item.userPrice.discountAmount 
+                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount),
+            orderId: orderRecord.id       
           });
-        }
+          // 4. Ghi log discounts
+          if (item.servicePrice.discountAmount>0) {
+              await orderDiscounts.create(OrderItemDiscountSchema.parse({
+                orderItemId: orderItem.id,
+                discountType: item.discounts.servicePriceDiscount.type,
+                discountAmount: item.discounts.servicePriceDiscount.amount,
+                appliedPolicies: item.discounts.servicePriceDiscount.appliedPolicies
+              }));            
+          }
 
-        // 4. Ghi log discounts
-        for (const discount of calculationResult.appliedDiscounts) {
-          await orderDiscounts.create(OrderDiscountSchema.parse({
-            orderId: orderRecord.id,
-            discountType: discount.type,
-            discountSource: discount.source,
-            discountAmount: discount.amount,
-            description: discount.description,
-          }));
+          if (item.userPrice.discountAmount>0) {
+            await orderDiscounts.create(OrderItemDiscountSchema.parse({
+              orderItemId: orderItem.id,
+              discountType: item.discounts.userPriceDiscount.type,
+              discountAmount: item.discounts.userPriceDiscount.amount,
+              appliedPolicies: item.discounts.userPriceDiscount.appliedPolicies
+            }));            
+          }
+
+          if (item.serviceVoucher.discountAmount>0) {
+            await orderDiscounts.create(OrderItemDiscountSchema.parse({
+              orderItemId: orderItem.id,
+              discountType: item.discounts.serviceVoucherDiscount.type,
+              discountAmount: item.discounts.serviceVoucherDiscount.amount,
+              appliedVoucherCode: item.discounts.serviceVoucherDiscount.voucher
+            }));            
+          }
+
+          if (item.userVoucher.discountAmount>0) {
+            await orderDiscounts.create(OrderItemDiscountSchema.parse({
+              orderItemId: orderItem.id,
+              discountType: item.discounts.userVoucherDiscount.type,
+              discountAmount: item.discounts.userVoucherDiscount.amount,
+              appliedVoucherCode: item.discounts.userVoucherDiscount.voucher
+            }));            
+          }
         }
 
         return { 
-          ...orderData, 
           id: orderRecord.id, 
-          items: request.items,
-          discounts: calculationResult.appliedDiscounts 
+          items: calculationResult
         };
       },
 
@@ -226,15 +264,7 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
         if (filters.status) {
           query = query.where('status', '==', filters.status);
         }
-        
-        if (filters.targetType) {
-          query = query.where('targetType', '==', filters.targetType);
-        }
-        
-        if (filters.customerId) {
-          query = query.where('customerId', '==', filters.customerId);
-        }
-
+    
         const result = await query
           .orderBy('createdAt', 'desc')
           .limit(filters.limit)
@@ -259,7 +289,7 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
         }
 
         const items = await orderItems.where('orderId', '==', orderId).get();
-        const discounts = await orderDiscounts.where('orderId', '==', orderId).get();
+        const discounts = await orderDiscounts.where('orderItemId', 'in', items.map((item: any) => item.id)).get();
 
         return {
           ...order,
@@ -274,79 +304,22 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
           throw new Error('Order not found');
         }
 
-        const updateData = {
-          ...order,
-          status: request.status,
-        };
+        let updateData;
 
         if (request.notes) {
-          updateData['internalNotes'] = request.notes;
+          updateData = {
+            status: request.status,
+            notes: request.notes
+          };
         }
-
+        else {
+          updateData = {
+            status: request.status
+          };
+        }
+      
         await orders.update(orderId, updateData);
         return { ...order, ...updateData, id: orderId };
-      },
-
-      async applyVoucherToOrder(orderId: string, request: ApplyVoucherToOrder): Promise<any> {
-        const order = await orders.findById(orderId);
-        if (!order) {
-          throw new Error('Order not found');
-        }
-
-        const voucherApp = createVoucherApplicationService(context, bindingName);
-        const items = await orderItems.where('orderId', '==', orderId).get();
-        
-        let voucherResult;
-        if (order.targetType === 'SERVICE') {
-          // Áp dụng voucher service
-          const serviceId = items[0]?.serviceId;
-          voucherResult = await voucherApp.applyServiceVoucher('system', {
-            voucherCode: request.voucherCode,
-            basePrice: order.subtotalAmount,
-            serviceId: serviceId,
-            customerId: order.customerId,
-            userId: order.userId,
-          });
-        } else {
-          // Áp dụng voucher user
-          voucherResult = await voucherApp.applyUserVoucher('system', {
-            voucherCode: request.voucherCode,
-            basePrice: order.subtotalAmount,
-            userId: order.userId,
-            userRole: order.userRole,
-          });
-        }
-
-        // Update order với voucher discount
-        const newDiscountAmount = order.discountAmount + voucherResult.discountAmount;
-        const newFinalAmount = order.totalAmount - voucherResult.discountAmount;
-
-        const updateData = {
-          appliedVoucherCode: request.voucherCode,
-          appliedVoucherDiscount: voucherResult.discountAmount,
-          discountAmount: newDiscountAmount,
-          finalAmount: newFinalAmount,
-        };
-
-        await orders.update(orderId, updateData);
-
-        // Ghi log discount
-        await orderDiscounts.create(OrderDiscountSchema.parse({
-          orderId: orderId,
-          discountType: 'VOUCHER',
-          discountSource: request.voucherCode,
-          discountAmount: voucherResult.discountAmount,
-          description: `${order.targetType} Voucher: ${request.voucherCode}`,
-        }));
-
-        return { ...order, ...updateData, id: orderId };
-      },
-
-      async calculateOrder(request: CalculateOrderRequest): Promise<any> {
-        const priceApp = createPriceApplicationService(context, bindingName);
-        const voucherApp = createVoucherApplicationService(context, bindingName);
-        
-        return await calculateOrderTotal(request, priceApp, voucherApp);
       },
 
       async cancelOrder(orderId: string): Promise<any> {
@@ -359,30 +332,13 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
           throw new Error(`Cannot cancel order with status: ${order.status}`);
         }
 
-        const updateData = OrderSchema.parse({
-          ...order,
-          status: 'CANCELLED',
-        });
+        const updateData = {
+          status: 'CANCELLED' as "PENDING" | "CONFIRMED" | "PROCESSING" | "COMPLETED" | "CANCELLED"
+        };
 
         await orders.update(orderId, updateData);
-        return { ...updateData, id: orderId };
-      },
+        return { ...order , ...updateData, id: orderId };
+      }
 
-      async getAvailableVouchersForOrder(orderId: string): Promise<any[]> {
-        const order = await orders.findById(orderId);
-        if (!order) {
-          throw new Error('Order not found');
-        }
-
-        const voucherApp = createVoucherApplicationService(context, bindingName);
-        const items = await orderItems.where('orderId', '==', orderId).get();
-
-        if (order.targetType === 'SERVICE') {
-          const serviceId = items[0]?.serviceId;
-          return await voucherApp.getAvailableServiceVouchers('system', serviceId, order.subtotalAmount);
-        } else {
-          return await voucherApp.getAvailableUserVouchers('system', order.userId, order.userRole, order.subtotalAmount);
-        }
-      },
     };
 }

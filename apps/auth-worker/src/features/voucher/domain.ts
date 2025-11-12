@@ -26,8 +26,6 @@ export const VoucherSchema = z.object({
     maxCalls: z.number().min(0).optional(),
     minUsage: z.number().min(0).optional(),
   }).optional(),
-  createdAt: z.string().default(() => new Date().toISOString()),
-  updatedAt: z.string().default(() => new Date().toISOString()),
 });
 
 export const CreateVoucherSchema = z.object({
@@ -58,41 +56,43 @@ export const CreateVoucherSchema = z.object({
 export const ApplyVoucherSchema = z.object({
   voucherCode: z.string().min(3).max(20),
   basePrice: z.number().min(0),
+  orderAmount: z.number().min(0),
   serviceId: z.string().optional(),
+  currentCalls: z.number().min(0).optional(),
   userId: z.string().optional(),
   userRole: z.enum(['member', 'admin']).optional(),
-  customerId: z.string().optional(),
 });
 
 export const ValidateVoucherRequestSchema = z.object({
   voucherCode: z.string().min(3).max(20),
   basePrice: z.number().min(0),
+  orderAmount: z.number().min(0),
   serviceId: z.string().optional(),
+  currentCalls: z.number().min(0).optional(),
   userId: z.string().optional(),
   userRole: z.enum(['member', 'admin']).optional(),
-  customerId: z.string().optional(),
 });
 
-export const VoucherUsageSchema = z.object({
-  voucherId: z.string(),
-  voucherCode: z.string(),
-  targetType: z.enum(['SERVICE', 'USER']),
-  serviceId: z.string().optional(),
-  userId: z.string().optional(),
-  userRole: z.enum(['member', 'admin']).optional(),
-  customerId: z.string().optional(),
-  basePrice: z.number().min(0),
-  discountAmount: z.number().min(0),
-  finalPrice: z.number().min(0),
-  appliedAt: z.string(),
-});
+// export const VoucherUsageSchema = z.object({
+//   voucherId: z.string(),
+//   voucherCode: z.string(),
+//   targetType: z.enum(['SERVICE', 'USER']),
+//   serviceId: z.string().optional(),
+//   userId: z.string().optional(),
+//   userRole: z.enum(['member', 'admin']).optional(),
+//   customerId: z.string().optional(),
+//   basePrice: z.number().min(0),
+//   discountAmount: z.number().min(0),
+//   finalPrice: z.number().min(0),
+//   appliedAt: z.string(),
+// });
 
 // Types
 export type Voucher = z.infer<typeof VoucherSchema>;
 export type CreateVoucher = z.infer<typeof CreateVoucherSchema>;
 export type ApplyVoucher = z.infer<typeof ApplyVoucherSchema>;
 export type ValidateVoucherRequest = z.infer<typeof ValidateVoucherRequestSchema>;
-export type VoucherUsage = z.infer<typeof VoucherUsageSchema>;
+// export type VoucherUsage = z.infer<typeof VoucherUsageSchema>;
 
 // Domain Interfaces
 export interface IVoucherInfrastructureService {
@@ -104,7 +104,7 @@ export interface IVoucherInfrastructureService {
   validateServiceVoucher(request: ValidateVoucherRequest): Promise<any>;
   validateUserVoucher(request: ValidateVoucherRequest): Promise<any>;
   updateVoucherStatus(voucherId: string, status: string): Promise<any>;
-  getVoucherUsage(voucherId: string): Promise<any[]>;
+  // getVoucherUsage(voucherId: string): Promise<any[]>;
   getAvailableServiceVouchers(serviceId?: string, basePrice?: number): Promise<any[]>;
   getAvailableUserVouchers(userId?: string, userRole?: string, basePrice?: number): Promise<any[]>;
 }

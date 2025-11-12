@@ -26,90 +26,25 @@ export function createPriceApplicationService(c: Context, bindingName: string): 
     async createPricePolicy(identifier: string, request: CreatePricePolicy): Promise<any> {
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const priceInfra = createPriceInfrastructureService(userDO);
-      const policy = await priceInfra.createPricePolicy(request);
-      
-      return {
-        id: policy.id,
-        name: policy.name,
-        type: policy.type,
-        value: policy.value,
-        applicableTo: policy.applicableTo,
-        targetType: policy.targetType,
-        targetIds: policy.targetIds,
-        conditions: policy.conditions,
-        priority: policy.priority,
-        status: policy.status,
-        startDate: policy.startDate,
-        endDate: policy.endDate,
-        createdAt: policy.createdAt,
-        updatedAt: policy.updatedAt,
-      };
+      return await priceInfra.createPricePolicy(request);      
     },
 
     async updatePricePolicy(identifier: string, policyId: string, request: UpdatePricePolicy): Promise<any> {
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const priceInfra = createPriceInfrastructureService(userDO);
-      const policy = await priceInfra.updatePricePolicy(policyId, request);
-      
-      return {
-        id: policy.id,
-        name: policy.name,
-        type: policy.type,
-        value: policy.value,
-        applicableTo: policy.applicableTo,
-        targetType: policy.targetType,
-        targetIds: policy.targetIds,
-        conditions: policy.conditions,
-        priority: policy.priority,
-        status: policy.status,
-        startDate: policy.startDate,
-        endDate: policy.endDate,
-        createdAt: policy.createdAt,
-        updatedAt: policy.updatedAt,
-      };
+      return await priceInfra.updatePricePolicy(policyId, request);
     },
 
     async getPricePolicies(identifier: string, status?: string): Promise<any[]> {
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const priceInfra = createPriceInfrastructureService(userDO);
-      const policies = await priceInfra.getPricePolicies(status);
-      
-      return policies.map(policy => ({
-        id: policy.id,
-        name: policy.name,
-        type: policy.type,
-        value: policy.value,
-        applicableTo: policy.applicableTo,
-        targetType: policy.targetType,
-        priority: policy.priority,
-        status: policy.status,
-        startDate: policy.startDate,
-        endDate: policy.endDate,
-        createdAt: policy.createdAt,
-      }));
+      return await priceInfra.getPricePolicies(status);      
     },
 
     async getPricePolicy(identifier: string, policyId: string): Promise<any> {
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const priceInfra = createPriceInfrastructureService(userDO);
-      const policy = await priceInfra.getPricePolicy(policyId);
-      
-      return {
-        id: policy.id,
-        name: policy.name,
-        type: policy.type,
-        value: policy.value,
-        applicableTo: policy.applicableTo,
-        targetType: policy.targetType,
-        targetIds: policy.targetIds,
-        conditions: policy.conditions,
-        priority: policy.priority,
-        status: policy.status,
-        startDate: policy.startDate,
-        endDate: policy.endDate,
-        createdAt: policy.createdAt,
-        updatedAt: policy.updatedAt,
-      };
+      return await priceInfra.getPricePolicy(policyId);      
     },
 
     async deletePricePolicy(identifier: string, policyId: string): Promise<void> {

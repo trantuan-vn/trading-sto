@@ -10,17 +10,17 @@ import { AUTH_CONSTANTS } from './constants';
 import { getOAuthConfig, generateOTP } from './utils';
 
 export function createRepository(userDO: UserDO) {
-  const users = userDO.table('users', UserSchema);
+  const users = userDO.table('users', UserSchema, { userScoped: true });
   const sessions = userDO.table('sessions', SessionSchema, { userScoped: true });
 
   const userRepository: IUserRepository = {
     async get(): Promise<any> {
-      return await users.where('id', '==', userDO.getCurrentUserId()).first();
+      return await users.limit(1).first();
     },
 
     async save(user: User): Promise<any> {
       const validUser = UserSchema.parse(user);
-      const existingUser = await users.where('identifier', '==', user.identifier).first();
+      const existingUser = await users.limit(1).first();
       if (existingUser) {
         return await users.update(existingUser.id, validUser);
       } else {
@@ -29,7 +29,7 @@ export function createRepository(userDO: UserDO) {
     },
 
     async delete(): Promise<void> {
-      const user = await users.where('id', '==', userDO.getCurrentUserId()).first();
+      const user = await users.limit(1).first();
       if (user) {
         await users.delete(user.id);
       }

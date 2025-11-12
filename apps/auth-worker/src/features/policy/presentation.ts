@@ -11,10 +11,13 @@ export function createPriceRoutes(bindingName: string) {
   app.post('/policies', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const request = CreatePricePolicySchema.parse(body);
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.createPricePolicy(user.identifier, request);
+      const result = await priceApp.createPricePolicy('system', request);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to create price policy');
@@ -26,11 +29,14 @@ export function createPriceRoutes(bindingName: string) {
   app.put('/policies/:policyId', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const policyId = c.req.param('policyId');
       const body = await c.req.json();
       const request = UpdatePricePolicySchema.parse(body);
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.updatePricePolicy(user.identifier, policyId, request);
+      const result = await priceApp.updatePricePolicy('system', policyId, request);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to update price policy');
@@ -42,9 +48,12 @@ export function createPriceRoutes(bindingName: string) {
   app.get('/policies', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const status = c.req.query('status') as 'ACTIVE' | 'INACTIVE' | undefined;
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.getPricePolicies(user.identifier, status);
+      const result = await priceApp.getPricePolicies('system', status);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get price policies');
@@ -56,9 +65,12 @@ export function createPriceRoutes(bindingName: string) {
   app.get('/policies/:policyId', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const policyId = c.req.param('policyId');
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.getPricePolicy(user.identifier, policyId);
+      const result = await priceApp.getPricePolicy('system', policyId);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get price policy');
@@ -70,9 +82,12 @@ export function createPriceRoutes(bindingName: string) {
   app.delete('/policies/:policyId', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const policyId = c.req.param('policyId');
       const priceApp = createPriceApplicationService(c, bindingName);
-      await priceApp.deletePricePolicy(user.identifier, policyId);
+      await priceApp.deletePricePolicy('system', policyId);
       return c.json({ success: true });
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to delete price policy');
@@ -84,9 +99,12 @@ export function createPriceRoutes(bindingName: string) {
   app.post('/calculate/service', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.calculateServicePrice(user.identifier, body);
+      const result = await priceApp.calculateServicePrice('system', body);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to calculate service price');
@@ -98,9 +116,12 @@ export function createPriceRoutes(bindingName: string) {
   app.post('/calculate/user', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.calculateUserPrice(user.identifier, body);
+      const result = await priceApp.calculateUserPrice('system', body);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to calculate user price');
@@ -112,10 +133,13 @@ export function createPriceRoutes(bindingName: string) {
   app.patch('/policies/:policyId/status', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const policyId = c.req.param('policyId');
       const body = await c.req.json();
       const priceApp = createPriceApplicationService(c, bindingName);
-      const result = await priceApp.updatePolicyStatus(user.identifier, policyId, body.status);
+      const result = await priceApp.updatePolicyStatus('system', policyId, body.status);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to update policy status');

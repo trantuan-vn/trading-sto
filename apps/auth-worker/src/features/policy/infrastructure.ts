@@ -6,13 +6,13 @@ import {
   UserPriceCalculationRequest,
   IPriceInfrastructureService,
   PricePolicySchema,
-  PriceCalculationLogSchema
+  // PriceCalculationLogSchema
 } from './domain';
 
 export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastructureService {
 
   const pricePolicies = userDO.table('price_policies', PricePolicySchema, { userScoped: true });
-  const priceCalculations = userDO.table('price_calculations', PriceCalculationLogSchema, { userScoped: true });
+  // const priceCalculations = userDO.table('price_calculations', PriceCalculationLogSchema, { userScoped: true });
   
   // Helper methods
   function isPolicyApplicable(policy: any, request: ServicePriceCalculationRequest | UserPriceCalculationRequest): boolean {
@@ -42,8 +42,8 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
       }
     }
 
-    // Check service usage conditions
-    if (policy.targetType === 'SERVICE' && 'currentCalls' in request && conditions.maxCalls) {
+    // Check usage conditions
+    if (policy.type === 'USAGE_BASED' && 'currentCalls' in request && conditions.maxCalls) {
       if (request.currentCalls ?? 0 >= conditions.maxCalls) {
         return false;
       }
@@ -137,9 +137,7 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
         ...request,
         status: 'ACTIVE',
       });
-
-      const createdRecord = await pricePolicies.create(policyData);
-      return { ...policyData, id: createdRecord.id };
+      return await pricePolicies.create(policyData);
     },
 
     async updatePricePolicy(policyId: string, request: UpdatePricePolicy): Promise<any> {
@@ -152,8 +150,7 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
         ...request,
       };
 
-      await pricePolicies.update(policyId, updateData);
-      return { ...updateData, id: policyId };
+      return await pricePolicies.update(policyId, updateData);
     },
 
     async getPricePolicies(status?: string): Promise<any[]> {
@@ -205,22 +202,22 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
         }
       }
 
-      // Log calculation
-      await priceCalculations.create({
-        basePrice: request.basePrice,
-        finalPrice: finalPrice,
-        totalDiscount: totalDiscount,
-        appliedPolicies: appliedPolicies,
-        serviceId: request.serviceId,
-        customerId: request.customerId,
-        targetType: 'SERVICE'
-      });
+      // // Log calculation
+      // await priceCalculations.create({
+      //   basePrice: request.basePrice,
+      //   finalPrice: finalPrice,
+      //   totalDiscount: totalDiscount,
+      //   appliedPolicies: appliedPolicies,
+      //   serviceId: request.serviceId,
+      //   customerId: request.customerId,
+      //   targetType: 'SERVICE'
+      // });
 
       return {
         basePrice: request.basePrice,
-        finalPrice: finalPrice,
+        finalPrice: finalPrice, 
         totalDiscount: totalDiscount,
-        appliedPolicies: appliedPolicies,
+        appliedPolicies: appliedPolicies, 
         currency: request.currency || 'VND',
         serviceId: request.serviceId
       };
@@ -252,15 +249,15 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
         }
       }
 
-      // Log calculation
-      await priceCalculations.create({
-        basePrice: request.basePrice,
-        finalPrice: finalPrice,
-        totalDiscount: totalDiscount,
-        appliedPolicies: appliedPolicies,
-        userId: request.userId,
-        targetType: 'USER'
-      });
+      // // Log calculation
+      // await priceCalculations.create({
+      //   basePrice: request.basePrice,
+      //   finalPrice: finalPrice,
+      //   totalDiscount: totalDiscount,
+      //   appliedPolicies: appliedPolicies,
+      //   userId: request.userId,
+      //   targetType: 'USER'
+      // });
 
       return {
         basePrice: request.basePrice,
@@ -278,8 +275,7 @@ export function createPriceInfrastructureService(userDO: UserDO): IPriceInfrastr
         throw new Error('Price policy not found');
       }
 
-      await pricePolicies.update(policyId, PricePolicySchema.parse({ ...policy, status }));
-      return { ...policy, status, id: policyId };
+      return await pricePolicies.update(policyId, { status: status as "ACTIVE" | "INACTIVE"});
     },
   };
 }

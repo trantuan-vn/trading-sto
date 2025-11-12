@@ -29,10 +29,13 @@ export function createVoucherRoutes(bindingName: string) {
   app.post('/apply/service', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const request = ApplyVoucherSchema.parse(body);
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.applyServiceVoucher(user.identifier, request);
+      const result = await voucherApp.applyServiceVoucher('system', request);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to apply voucher to service');
@@ -44,10 +47,13 @@ export function createVoucherRoutes(bindingName: string) {
   app.post('/apply/user', async (c) => {
     try {
       const user = requireAuth(c);
+            if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const request = ApplyVoucherSchema.parse(body);
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.applyUserVoucher(user.identifier, request);
+      const result = await voucherApp.applyUserVoucher('system', request);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to apply voucher to user');
@@ -59,10 +65,13 @@ export function createVoucherRoutes(bindingName: string) {
   app.get('/vouchers', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const status = c.req.query('status') as 'ACTIVE' | 'INACTIVE' | undefined;
       const targetType = c.req.query('targetType') as 'SERVICE' | 'USER' | undefined;
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.getVouchers(user.identifier, status, targetType);
+      const result = await voucherApp.getVouchers('system', status, targetType);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get vouchers');
@@ -74,9 +83,12 @@ export function createVoucherRoutes(bindingName: string) {
   app.get('/code/:voucherCode', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const voucherCode = c.req.param('voucherCode');
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.getVoucherByCode(user.identifier, voucherCode);
+      const result = await voucherApp.getVoucherByCode('system', voucherCode);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get voucher');
@@ -88,9 +100,12 @@ export function createVoucherRoutes(bindingName: string) {
   app.post('/validate/service', async (c) => {
     try {
       const user = requireAuth(c);
+            if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.validateServiceVoucher(user.identifier, body);
+      const result = await voucherApp.validateServiceVoucher('system', body);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to validate service voucher');
@@ -102,9 +117,12 @@ export function createVoucherRoutes(bindingName: string) {
   app.post('/validate/user', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const body = await c.req.json();
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.validateUserVoucher(user.identifier, body);
+      const result = await voucherApp.validateUserVoucher('system', body);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to validate user voucher');
@@ -116,10 +134,13 @@ export function createVoucherRoutes(bindingName: string) {
   app.patch('/vouchers/:voucherId/status', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const voucherId = c.req.param('voucherId');
       const body = await c.req.json();
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.updateVoucherStatus(user.identifier, voucherId, body.status);
+      const result = await voucherApp.updateVoucherStatus('system', voucherId, body.status);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to update voucher status');
@@ -128,27 +149,30 @@ export function createVoucherRoutes(bindingName: string) {
   });
 
   // Lấy lịch sử sử dụng voucher
-  app.get('/usage/:voucherId', async (c) => {
-    try {
-      const user = requireAuth(c);
-      const voucherId = c.req.param('voucherId');
-      const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.getVoucherUsage(user.identifier, voucherId);
-      return c.json(result);
-    } catch (e) {
-      const { errorResponse, status } = handleError(e, 'Failed to get voucher usage');
-      return c.json(errorResponse, status);
-    }
-  });
+  // app.get('/usage/:voucherId', async (c) => {
+  //   try {
+  //     const user = requireAuth(c);
+  //     const voucherId = c.req.param('voucherId');
+  //     const voucherApp = createVoucherApplicationService(c, bindingName);
+  //     const result = await voucherApp.getVoucherUsage(user.identifier, voucherId);
+  //     return c.json(result);
+  //   } catch (e) {
+  //     const { errorResponse, status } = handleError(e, 'Failed to get voucher usage');
+  //     return c.json(errorResponse, status);
+  //   }
+  // });
 
   // Lấy vouchers khả dụng cho service
   app.get('/available/services', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const serviceId = c.req.query('serviceId');
       const basePrice = parseFloat(c.req.query('basePrice') || '0');
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.getAvailableServiceVouchers(user.identifier, serviceId, basePrice);
+      const result = await voucherApp.getAvailableServiceVouchers('system', serviceId, basePrice);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get available service vouchers');
@@ -160,11 +184,14 @@ export function createVoucherRoutes(bindingName: string) {
   app.get('/available/users', async (c) => {
     try {
       const user = requireAuth(c);
+      if (user.role !== 'admin') {
+        throw new Error('Unauthorized');
+      }
       const userId = c.req.query('userId');
       const userRole = c.req.query('userRole') as 'member' | 'admin' | undefined;
       const basePrice = parseFloat(c.req.query('basePrice') || '0');
       const voucherApp = createVoucherApplicationService(c, bindingName);
-      const result = await voucherApp.getAvailableUserVouchers(user.identifier, userId, userRole, basePrice);
+      const result = await voucherApp.getAvailableUserVouchers('system', userId, userRole, basePrice);
       return c.json(result);
     } catch (e) {
       const { errorResponse, status } = handleError(e, 'Failed to get available user vouchers');
