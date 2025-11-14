@@ -6,7 +6,7 @@ import { User, UserSchema, IUserRepository, IOTPService, IWalletService, IOAuthS
           OAuthTokenResponse, OAuthTokenResponseSchema,
           GoogleUserInfoSchema, AppleUserInfoSchema, FacebookUserInfoSchema, GitHubUserInfoSchema, TwitterUserInfoSchema,
           Session, SessionSchema } from './domain';
-import { AUTH_CONSTANTS } from './constants';
+import { AUTH_CONSTANTS } from './constant';
 import { getOAuthConfig, generateOTP } from './utils';
 
 export function createRepository(userDO: UserDO) {
@@ -247,7 +247,6 @@ export function createOAuthService(env: Env): IOAuthService {
     },
 
     async getUserInfoFromProvider(provider: string, accessToken: string): Promise<any> {
-      try {
         const config = getOAuthConfig(provider, env);
         const response = await fetch(config.userInfoEndpoint, {
           headers: {
@@ -293,49 +292,12 @@ export function createOAuthService(env: Env): IOAuthService {
         }
 
         return validatedUserInfo;
-
-      } catch (e) {
-        const { errorResponse, status } = handleError(e, `Failed to get user info from ${provider}`);
-        throw { errorResponse, status };
-      }      
     }
-
   };
 }
 
 export function createKvService(env: any): IKvService {
   return {
-    async checkRateLimit(sessionId: string): Promise<void> {
-      const now = Date.now();
-      
-      const recordStr = await env.NONCE_KV.get(`RateLimit:${sessionId}`);
-      const record = recordStr ? JSON.parse(recordStr) : null;
-
-      if (record && record.resetAt > now) {
-        if (record.count >= AUTH_CONSTANTS.RATE_LIMIT_MAX) {
-          throw new Error('Too many requests');
-        }
-
-        record.count += 1;
-        await env.NONCE_KV.put(
-          `RateLimit:${sessionId}`,
-          JSON.stringify(record),
-          {
-            expirationTtl: AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000,
-          }
-        );
-      } else {
-        const resetAt = now + AUTH_CONSTANTS.RATE_LIMIT_WINDOW;
-        const newRecord = { count: 1, resetAt };
-        await env.NONCE_KV.put(
-          `RateLimit:${sessionId}`,
-          JSON.stringify(newRecord),
-          {
-            expirationTtl: AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000,
-          }
-        );
-      }
-    },
     async saveNonce(sessionId: string, nonce: string): Promise<void> {
       const nonceData = {
         nonce,

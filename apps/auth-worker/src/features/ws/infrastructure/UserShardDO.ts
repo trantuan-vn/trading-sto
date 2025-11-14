@@ -19,7 +19,7 @@ import {
   ShardConfigSchema
 } from '../domain';
 
-import { handleError } from '../../../shared/utils';
+import { handleErrorWithoutIp } from '../../../shared/utils';
 
 export class UserShardDO extends DurableObject {
   protected state: DurableObjectState;
@@ -102,51 +102,46 @@ export class UserShardDO extends DurableObject {
   // I. REQUEST HANDLER
   // =============================================
   async fetch(request: Request): Promise<Response> {
-    try {
-      const url = new URL(request.url);
-      const path = url.pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-      // Xử lý internal messages
-      if (url.hostname === 'shard.internal') {
-        return await this.handleInternalMessage(request);
-      }
-
-      switch (path) {
-        case '/info':
-          return await this.getShardInfo();
-          
-        case '/users':
-          if (request.method === 'GET') {
-            return await this.getUsersList();
-          }
-          break;
-          
-        case '/count':
-          return await this.getUserCountResponse();
-          
-        case '/config':
-          if (request.method === 'POST') {
-            return await this.handleUpdateConfig(request);
-          }
-          break;
-          
-        case '/cleanup':
-          if (request.method === 'POST') {
-            return await this.handleCleanup(request);
-          }
-          break;
-          
-        case '/performance':
-          return await this.getPerformanceMetrics();
-          
-        default:
-          throw new Error(`Unknown path: ${path}`);
-      }
-      throw new Error('Method not allowed');
-    } catch (error) {
-      handleError(error, 'UserShardDO fetch failed');
-      return new Response('Internal Server Error', { status: 500 });
+    // Xử lý internal messages
+    if (url.hostname === 'shard.internal') {
+      return await this.handleInternalMessage(request);
     }
+
+    switch (path) {
+      case '/info':
+        return await this.getShardInfo();
+        
+      case '/users':
+        if (request.method === 'GET') {
+          return await this.getUsersList();
+        }
+        break;
+        
+      case '/count':
+        return await this.getUserCountResponse();
+        
+      case '/config':
+        if (request.method === 'POST') {
+          return await this.handleUpdateConfig(request);
+        }
+        break;
+        
+      case '/cleanup':
+        if (request.method === 'POST') {
+          return await this.handleCleanup(request);
+        }
+        break;
+        
+      case '/performance':
+        return await this.getPerformanceMetrics();
+        
+      default:
+        throw new Error(`Unknown path: ${path}`);
+    }
+    throw new Error('Method not allowed');
   }
 
   // =============================================
@@ -600,7 +595,7 @@ export class UserShardDO extends DurableObject {
       console.log(`🧹 Shard ${this.getShardName()} cleaned up ${operation.usersRemoved} inactive users`);
       
     } catch (error) {
-      handleError(error, 'Cleanup operation failed');
+      handleErrorWithoutIp(error, 'Cleanup operation failed');
       operation.status = 'failed';
       operation.error = String(error);
     }

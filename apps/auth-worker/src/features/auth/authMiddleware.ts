@@ -2,8 +2,8 @@ import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { clearAuthCookies, setCookieWithOption } from './utils.js';
 import { createApplicationService } from './application';
-import { handleError } from '../../shared/utils';
-import { AUTH_CONSTANTS } from './constants';
+import { handleError, getClientIp } from '../../shared/utils';
+import { AUTH_CONSTANTS } from './constant.js';
 
 export function createAuthMiddleware(bindingName: string) {
   return async (c: Context, next: Next) => {
@@ -23,7 +23,7 @@ export function createAuthMiddleware(bindingName: string) {
       
       await processAuthentication(c, bindingName, sessionId, token, refreshToken);
     } catch (error) {
-      handleError(error, 'Failed to authenticate user');
+      handleError(c, error, 'Failed to authenticate user');
       clearAuthCookies(c);
     }
     
@@ -99,4 +99,46 @@ export function requireAuth(c: Context) {
     throw new Error('Not authenticated');
   }
   return user;
+}
+
+export function createRateLimitMiddleware() {
+  return async (c: Context, next: Next) => {
+    
+    try {
+      const ip = getClientIp(c);
+      // Lấy thông tin IP từ KV
+      const ipData = await c.env.NONCE_KV.get(ip);
+      
+      if (ipData) {
+        const data = JSON.parse(ipData);
+        const now = Date.now();
+        
+        // Kiểm tra thời gian chặn
+        if (now < data.blockUntil) {
+          return new Response('IP Blocked', { status: 429 });
+        }
+        
+        // Reset nếu hết thời gian chặn
+        if (now > data.blockUntil) {
+          await c.env.NONCE_KV.delete(ip);
+        }
+      }      
+    } catch (error) {
+      handleError(c, error, 'Failed to check rate limit');
+      clearAuthCookies(c);
+    }
+    
+    await next();
+  };
+}
+
+export function securityHeadersMiddleware() {
+  return async (c: Context, next: Next) => {
+    await next();
+    
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    c.header('Content-Security-Policy', "default-src 'self'");
+    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
+  };
 }

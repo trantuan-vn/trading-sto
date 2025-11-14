@@ -6,7 +6,7 @@ import { setCookie, deleteCookie } from 'hono/cookie'
 
 import { OAuthConfig, OAuthProvider, GoogleUserInfo, AppleUserInfo, FacebookUserInfo, GitHubUserInfo, TwitterUserInfo } from './domain'
 
-import { AUTH_CONSTANTS } from './constants';
+import { AUTH_CONSTANTS } from './constant';
 
 // I. JWT
 // JWT payload type matching the UserDO internal implementation

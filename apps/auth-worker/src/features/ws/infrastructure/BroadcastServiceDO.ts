@@ -16,16 +16,12 @@ import {
   DeliveryStats,
   BroadcastResponse,
   ScaleConfigResponse,
-  ErrorResponse,
   DEFAULT_SCALE_CONFIGS, 
   DEFAULT_SERVICE_CONFIG,
   BroadcastValidator,
   UserShardSchema,
   GlobalCounterSchema
 } from '../domain';
-
-import { handleError } from '../../../shared/utils';
-
 
 export class BroadcastServiceDO extends DurableObject {
   protected state: DurableObjectState;
@@ -129,86 +125,77 @@ export class BroadcastServiceDO extends DurableObject {
   // I. REQUEST HANDLER
   // =============================================
   async fetch(request: Request): Promise<Response> {
-    try {
-      const url = new URL(request.url);
-      const path = url.pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-      // Xử lý internal messages
-      if (url.hostname === 'broadcast.internal') {
-        return await this.handleInternalMessage(request);
-      }
-
-      switch (path) {
-        case '/broadcast':
-          if (request.method === 'POST') {
-            return await this.handleCreateBroadcast(request);
-          }
-          break;
-          
-        case '/analytics':
-          if (request.method === 'GET') {
-            const broadcastId = url.searchParams.get('broadcastId');
-            if (broadcastId) {
-              return await this.getBroadcastAnalytics(broadcastId);
-            }
-          }
-          break;
-          
-        case '/scale':
-          if (request.method === 'POST') {
-            return await this.handleUpdateScaleConfig(request);
-          }
-          break;
-          
-        case '/health':
-          return await this.getHealthStatus();
-          
-        case '/stats':
-          return await this.getServiceStats();
-          
-        default:
-          return this.createErrorResponse('NOT_FOUND', 'Endpoint not found');
-      }
-
-      return this.createErrorResponse('METHOD_NOT_ALLOWED', 'Method not allowed');
-    } catch (error) {
-      handleError(error, 'BroadcastServiceDO fetch failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Internal server error');
+    // Xử lý internal messages
+    if (url.hostname === 'broadcast.internal') {
+      return await this.handleInternalMessage(request);
     }
+
+    switch (path) {
+      case '/broadcast':
+        if (request.method === 'POST') {
+          return await this.handleCreateBroadcast(request);
+        }
+        break;
+        
+      case '/analytics':
+        if (request.method === 'GET') {
+          const broadcastId = url.searchParams.get('broadcastId');
+          if (broadcastId) {
+            return await this.getBroadcastAnalytics(broadcastId);
+          }
+        }
+        break;
+        
+      case '/scale':
+        if (request.method === 'POST') {
+          return await this.handleUpdateScaleConfig(request);
+        }
+        break;
+        
+      case '/health':
+        return await this.getHealthStatus();
+        
+      case '/stats':
+        return await this.getServiceStats();
+        
+      default:
+        throw new Error(`Unknown path: ${path}`);
+    }
+
+    throw new Error('Method not allowed');
   }
 
   // =============================================
   // II. INTERNAL MESSAGE HANDLER
   // =============================================
   private async handleInternalMessage(request: Request): Promise<Response> {
-    try {
-      // Ép kiểu rõ ràng cho dữ liệu JSON
-      const body = await request.json() as {
-        action: string;
-        [key: string]: any;
-      };
+    // Ép kiểu rõ ràng cho dữ liệu JSON
+    const body = await request.json() as {
+      action: string;
+      [key: string]: any;
+    };
 
-      const { action, ...data } = body;
-      
-      switch (action) {
-        case 'delivery_report':
-          await this.handleDeliveryReport(data);
-          break;
-        case 'shard_health':
-          await this.handleShardHealthReport(data);
-          break;
-        default:
-          return this.createErrorResponse('INVALID_ACTION', 'Unknown action');
-      }
-      
-      return new Response(JSON.stringify({ status: 'processed' }));
-    } catch (error) {
-      return this.createErrorResponse('INTERNAL_ERROR', 'Internal message processing failed');
+    const { action, ...data } = body;
+    
+    switch (action) {
+      case 'delivery_report':
+        await this.handleDeliveryReport(data);
+        break;
+      case 'shard_health':
+        await this.handleShardHealthReport(data);
+        break;
+      default:
+        throw new Error(`Unknown action: ${action}`);
+        
     }
+    return new Response(JSON.stringify({ status: 'processed' }));
   }
 
   private async handleDeliveryReport(data: any) {
-    const { broadcastId, deliveredCount, shardName, timestamp } = data;
+    const { broadcastId, deliveredCount, shardName } = data;
     
     if (broadcastId && deliveredCount) {
       await this.updateDeliveryCount(broadcastId, deliveredCount);
@@ -225,28 +212,23 @@ export class BroadcastServiceDO extends DurableObject {
   // II. BROADCAST MANAGEMENT
   // =============================================
   private async handleCreateBroadcast(request: Request): Promise<Response> {
-    try {
-      const body = await request.json();
-      const createData: CreateBroadcast = BroadcastValidator.validateCreateBroadcast(body);
-      
-      const broadcastId = await this.createBroadcast(createData);
-      const estimatedUsers = await this.getTotalUsers();
-      
-      const response: BroadcastResponse = {
-        broadcastId,
-        status: 'started',
-        config: this.scaleConfig,
-        estimatedUsers,
-        queuePosition: 0
-      };
+    const body = await request.json();
+    const createData: CreateBroadcast = BroadcastValidator.validateCreateBroadcast(body);
+    
+    const broadcastId = await this.createBroadcast(createData);
+    const estimatedUsers = await this.getTotalUsers();
+    
+    const response: BroadcastResponse = {
+      broadcastId,
+      status: 'started',
+      config: this.scaleConfig,
+      estimatedUsers,
+      queuePosition: 0
+    };
 
-      return new Response(JSON.stringify(response), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleError(error, 'Create broadcast failed');
-      return this.createErrorResponse('VALIDATION_ERROR', 'Invalid broadcast data');
-    }
+    return new Response(JSON.stringify(response), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   async createBroadcast(createData: CreateBroadcast): Promise<string> {
@@ -354,22 +336,16 @@ export class BroadcastServiceDO extends DurableObject {
 
   // PHƯƠNG THỨC MỚI: Gửi message không đồng bộ đến shard
   private async sendToShard(shardName: string, action: string, data: any) {
-    try {
-      const shardDO = this.env.USER_SHARD_DO.get(
-        this.env.USER_SHARD_DO.idFromName(shardName)
-      );
-      
-      // Sử dụng internal endpoint để giảm overhead
-      await shardDO.fetch('https://shard.internal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, ...data })
-      });
-      
-    } catch (error) {
-      console.warn(`Failed to send to shard ${shardName}:`, error);
-      // Không throw error để không ảnh hưởng đến các shard khác
-    }
+    const shardDO = this.env.USER_SHARD_DO.get(
+      this.env.USER_SHARD_DO.idFromName(shardName)
+    );
+    
+    // Sử dụng internal endpoint để giảm overhead
+    await shardDO.fetch('https://shard.internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...data })
+    });    
   }
 
   // PHƯƠNG THỨC MỚI: Cập nhật delivery count hiệu quả hơn
@@ -521,40 +497,35 @@ export class BroadcastServiceDO extends DurableObject {
   // V. ANALYTICS & MONITORING
   // =============================================
   async getBroadcastAnalytics(broadcastId: string): Promise<Response> {
-    try {
-      if (!BroadcastValidator.validateBroadcastId(broadcastId)) {
-        return this.createErrorResponse('VALIDATION_ERROR', 'Invalid broadcast ID');
-      }
-
-      const stats = await this.getDeliveryStats(broadcastId);
-      if (!stats) {
-        return this.createErrorResponse('NOT_FOUND', 'Broadcast not found');
-      }
-
-      const estimatedCompletionSeconds = stats.deliveryRate > 0 ? stats.pending / stats.deliveryRate : Infinity;
-      const estimatedCompletionTime = 
-        isFinite(estimatedCompletionSeconds)
-          ? new Date(Date.now() + estimatedCompletionSeconds * 1000).toISOString()
-          : null;       
-
-      const analytics: BroadcastAnalytics = {
-        ...stats,
-        estimatedCompletionSeconds: estimatedCompletionSeconds,
-        estimatedCompletionTime: estimatedCompletionTime,
-        status: stats.completionPercentage === 100 ? 'completed' : 
-                stats.deliveryRate > 0 ? 'in_progress' : 'stalled',
-        shardProgress: await this.getShardProgress(broadcastId),
-        failed: 0,
-        elapsedSeconds: (Date.now() - stats.startTime) / 1000        
-      };
-
-      return new Response(JSON.stringify(analytics), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleError(error, 'Get broadcast analytics failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Failed to get analytics');
+    if (!BroadcastValidator.validateBroadcastId(broadcastId)) {
+      throw new Error('Invalid broadcast ID');
     }
+
+    const stats = await this.getDeliveryStats(broadcastId);
+    if (!stats) {
+      throw new Error('Broadcast not found');
+    }
+
+    const estimatedCompletionSeconds = stats.deliveryRate > 0 ? stats.pending / stats.deliveryRate : Infinity;
+    const estimatedCompletionTime = 
+      isFinite(estimatedCompletionSeconds)
+        ? new Date(Date.now() + estimatedCompletionSeconds * 1000).toISOString()
+        : null;       
+
+    const analytics: BroadcastAnalytics = {
+      ...stats,
+      estimatedCompletionSeconds: estimatedCompletionSeconds,
+      estimatedCompletionTime: estimatedCompletionTime,
+      status: stats.completionPercentage === 100 ? 'completed' : 
+              stats.deliveryRate > 0 ? 'in_progress' : 'stalled',
+      shardProgress: await this.getShardProgress(broadcastId),
+      failed: 0,
+      elapsedSeconds: (Date.now() - stats.startTime) / 1000        
+    };
+
+    return new Response(JSON.stringify(analytics), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async getDeliveryStats(broadcastId: string): Promise<DeliveryStats | null> {
@@ -631,31 +602,26 @@ export class BroadcastServiceDO extends DurableObject {
   // VI. SCALING & CONFIGURATION
   // =============================================
   private async handleUpdateScaleConfig(request: Request): Promise<Response> {
-    try {
-      const body = await request.json();
-      const { scale } = body as { scale: string };
-      
-      if (!scale || !DEFAULT_SCALE_CONFIGS[scale as ScaleConfigName]) {
-        return this.createErrorResponse('VALIDATION_ERROR', 'Invalid scale configuration');
-      }
-
-      const previousScale = this.scaleConfigName;
-      await this.updateScaleConfig(scale as ScaleConfigName);
-      
-      const response: ScaleConfigResponse = {
-        scale: scale as ScaleConfigName,
-        config: this.scaleConfig,
-        previousScale,
-        estimatedCapacity: this.getEstimatedCapacity()
-      };
-
-      return new Response(JSON.stringify(response), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleError(error, 'Update scale config failed');
-      return this.createErrorResponse('INTERNAL_ERROR', 'Failed to update scale config');
+    const body = await request.json();
+    const { scale } = body as { scale: string };
+    
+    if (!scale || !DEFAULT_SCALE_CONFIGS[scale as ScaleConfigName]) {
+      throw new Error('Invalid scale');
     }
+
+    const previousScale = this.scaleConfigName;
+    await this.updateScaleConfig(scale as ScaleConfigName);
+    
+    const response: ScaleConfigResponse = {
+      scale: scale as ScaleConfigName,
+      config: this.scaleConfig,
+      previousScale,
+      estimatedCapacity: this.getEstimatedCapacity()
+    };
+
+    return new Response(JSON.stringify(response), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   async updateScaleConfig(scale: ScaleConfigName) {
@@ -786,19 +752,5 @@ export class BroadcastServiceDO extends DurableObject {
         error: error.message
       });
     }
-  }
-
-  private createErrorResponse(code: string, message: string): Response {
-    const errorResponse: ErrorResponse = {
-      error: message,
-      code,
-      timestamp: Date.now()
-    };
-
-    return new Response(JSON.stringify(errorResponse), {
-      status: code === 'NOT_FOUND' ? 404 : 
-              code === 'VALIDATION_ERROR' ? 400 : 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
   }
 }

@@ -6,8 +6,8 @@ import { SiweMessage } from 'siwe';
 import { OAuthProvider, Session } from './domain';
 import { getOAuthConfig, getOAuthScopes, generateWallet, isValidEmail, isValidPhone, 
   generateAccessToken, generateRefreshToken, verifyJWT, normalizeIdentifier, validateSession } from './utils';
-import { createOAuthService, createKvService, createRepository, createOTPService, createWalletService } from './infrastructure';
-import { AUTH_CONSTANTS } from './constants';
+import { createOAuthService, createRepository, createOTPService, createWalletService } from './infrastructure';
+import { AUTH_CONSTANTS } from './constant';
 
 
 interface IApplicationService {
@@ -33,8 +33,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
   return {
     // I. OAUTH
     async getAuthUrlUseCase(provider: OAuthProvider, sessionId: string): Promise<{sessionId: string, authUrl: string}> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
 
       const oauthService = createOAuthService(c.env);      
       const state = await oauthService.generateState(sessionId);
@@ -64,8 +62,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       }
     },
     async exchangeOAuthCodeUseCase(provider: string, sessionId: string, state: string, code: string ): Promise<any>{
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
       const oauthService = createOAuthService(c.env);      
       const tokenData= await oauthService.exchangeOAuthCode(provider, sessionId, state, code);
       return await oauthService.getUserInfoFromProvider(provider, tokenData.access_token);      
@@ -118,8 +114,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
     // II. EMAIL/PHONE
     async getRequestOtpUseCase(identifier: string, sessionId: string): Promise<void> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
 
       const otpService = createOTPService(c.env);
       
@@ -134,8 +128,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       }
     },
     async verifyOtpUseCase(identifier: string, sessionId: string, otp: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
       const otpService = createOTPService(c.env);
       
       const isValid = await otpService.verifyOTP(otp, sessionId);
@@ -191,14 +183,10 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
     // III. WALLET
     async generateNonceUseCase(sessionId: string): Promise<string> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
       const walletService = createWalletService(c.env);      
       return await walletService.generateNonceAndStore(sessionId);
     },
     async verifySignatureUseCase(sessionId: string, message: string, signature: string): Promise<SiweMessage> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
       const walletService = createWalletService(c.env);      
       return await walletService.verifySignature(sessionId, message, signature);
     },
@@ -239,15 +227,11 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
     // IV. Common
     async logoutUseCase(identifier: string, sessionId: string): Promise<void> {
-      const kvService = createKvService(c.env);      
-      await kvService.checkRateLimit(sessionId);
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       await repository.sessions.update(sessionId, { isActive: false });
     },
     async logoutAllUseCase(identifier: string, sessionId: string): Promise<void>{
-      const kvService = createKvService(c.env);      
-      await kvService.checkRateLimit(sessionId);
       const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
       const repository = createRepository(userDO);
       await repository.sessions.deactivateAllUserSessions(userDO.getCurrentUserId());
@@ -258,8 +242,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       refreshToken: string
     ): Promise<{ ok: boolean; user: any }> {
 
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
 
       // Verify JWT token
       const result = await verifyJWT(token, c.env.JWT_SECRET);
@@ -292,8 +274,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       sessionId: string, 
       refreshToken: string
     ): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }> {
-      const kvService = createKvService(c.env);
-      await kvService.checkRateLimit(sessionId);
       // Verify refresh token
       const result = await verifyJWT(refreshToken, c.env.JWT_SECRET);
       if (!result.ok) {

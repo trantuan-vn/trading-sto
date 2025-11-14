@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { requireAuth } from '../../features/auth/authMiddleware';
-import { requirePermissions } from '../../features/token/authMiddleware';
+import { requirePermissions } from '../../features/member/token/authMiddleware';
 import { createWebsocketApplicationService } from './application';
 import { handleError } from '../../shared/utils';
 
@@ -15,7 +15,7 @@ export function createDashboardWebSocketRoutes(bindingName: string) {
       return wsApplicationService.connectWebSocketUseCase(user.identifier);
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Failed to authenticate WebSocket");
+      const { errorResponse, status } = await handleError(c, e, "Failed to connect WebSocket");
       return c.json(errorResponse, status);
     }
   });
@@ -32,11 +32,12 @@ export function createDashboardWebSocketRoutes(bindingName: string) {
       return wsApplicationService.broadcastMessageUseCase(request);
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Broadcast failed");
+      const { errorResponse, status } = await handleError(c, e, "Broadcast failed");
       return c.json(errorResponse, status);
     }
   });
-   return app;
+  
+  return app;
 }
 
 export function createApiWebSocketRoutes(bindingName: string) {
@@ -50,7 +51,7 @@ export function createApiWebSocketRoutes(bindingName: string) {
       return wsApplicationService.connectWebSocketUseCase(token.identifier);
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Failed to authenticate WebSocket");
+      const { errorResponse, status } = await handleError(c, e, "Failed to connect WebSocket");
       return c.json(errorResponse, status);
     }
   });

@@ -169,7 +169,6 @@ export interface IOAuthService {
 }
 
 export interface IKvService {
-  checkRateLimit(sessionId: string): Promise<void>;
   saveNonce(sessionId: string, nonce: string): Promise<void>;
   validateNonce(sessionId: string, nonce: string): Promise<boolean>
 }

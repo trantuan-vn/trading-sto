@@ -6,7 +6,7 @@ import { requireAuth } from './authMiddleware';
 import { createApplicationService } from './application';
 import { OTPRequestSchema, OTPVerificationSchema, OAuthCallbackSchema, SIWEAuthSchema } from './domain';
 import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier } from './utils';
-import { AUTH_CONSTANTS } from './constants';
+import { AUTH_CONSTANTS } from './constant';
 
 export function createAuthRoutes(bindingName: string) {
   const routes = new Hono<{ Bindings: Env }>();
@@ -37,7 +37,7 @@ export function createAuthRoutes(bindingName: string) {
       return c.json({ url: authUrl });
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Failed to get OAuth URL");
+      const { errorResponse, status } = await handleError(c, e, "Failed to get OAuth URL");
       return c.json(errorResponse, status);
     }
   });
@@ -101,7 +101,7 @@ export function createAuthRoutes(bindingName: string) {
       return c.redirect(redirectUrl);
 
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "OAuth callback failed");
+      const { errorResponse, status } = await handleError(c, e, "OAuth callback failed");
       clearAuthCookies(c);
       return c.json(errorResponse, status);
     }
@@ -128,7 +128,7 @@ export function createAuthRoutes(bindingName: string) {
       return c.json({ ok: true });
     }
     catch (e) {
-      const { errorResponse, status } = handleError(e, "OTP request failed");
+      const { errorResponse, status } = await handleError(c, e, "OTP request failed");
       return c.json(errorResponse, status);
     }
   });
@@ -163,7 +163,7 @@ export function createAuthRoutes(bindingName: string) {
       return c.json({ ok: true });
     }
     catch (e) {
-      const { errorResponse, status } = handleError(e, "OTP verification failed");
+      const { errorResponse, status } = await handleError(c, e, "OTP verification failed");
       clearAuthCookies(c);
       return c.json(errorResponse, status);
     }
@@ -183,7 +183,7 @@ export function createAuthRoutes(bindingName: string) {
 
       return c.json({ nonce: nonce });
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Nonce request failed");
+      const { errorResponse, status } = await handleError(c, e, "Nonce request failed");
       return c.json(errorResponse, status);
     }
   });
@@ -224,7 +224,7 @@ export function createAuthRoutes(bindingName: string) {
       return c.json({ ok: true });
       
     } catch (e) {
-      const { errorResponse, status } = handleError(e, "Wallet connection failed");
+      const { errorResponse, status } = await handleError(c,e, "Wallet connection failed");
       clearAuthCookies(c);
       return c.json(errorResponse, status);
     }
@@ -244,7 +244,7 @@ export function createAuthRoutes(bindingName: string) {
       
       return c.json({ ok: true });
     } catch (e) {
-      const { errorResponse } = handleError(e, "Logout failed");
+      const { errorResponse } = await handleError(c, e, "Logout failed");
       return c.json(errorResponse, 401);
     }
   });
@@ -261,7 +261,7 @@ export function createAuthRoutes(bindingName: string) {
       clearAuthCookies(c);
       return c.json({ ok: true });
     } catch (e) {
-      const { errorResponse } = handleError(e, "Logout failed");
+      const { errorResponse } = await handleError(c, e, "Logout failed");
       return c.json(errorResponse, 401);
     }
   });
@@ -274,7 +274,7 @@ export function createAuthRoutes(bindingName: string) {
       }
       return c.json({ id: user.id, identifier: user.identifier, address: user.address }, 200);
     } catch (e: any) {
-      const { errorResponse } = handleError(e, "Get user info failed");
+      const { errorResponse } = await handleError(c,e, "Get user info failed");
       return c.json(errorResponse, 401);
     }
   });  

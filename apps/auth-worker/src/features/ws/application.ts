@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getIdFromName } from '../../shared/utils';
+import { getIdFromName, handleError } from '../../shared/utils';
 import { UserDO } from './infrastructure/UserDO';
 import { BroadcastServiceDO } from './infrastructure/BroadcastServiceDO';
 

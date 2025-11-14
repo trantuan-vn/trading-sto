@@ -2,7 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
 
 import { UserDODatabase, TableOptions } from '../../../shared/database/index.js';
-import { handleError, getIPAndUserAgent, getSessionIdHash } from '../../../shared/utils.js';
+import { getIPAndUserAgent, getSessionIdHash, handleErrorWithoutIp } from '../../../shared/utils.js';
 
 import { 
   ConnectionSchema, 
@@ -92,30 +92,25 @@ export class UserDO extends DurableObject {
   // IV. FETCH HANDLER
   // =============================================
   async fetch(request: Request): Promise<Response> {
-    try {
-      // Handle WebSocket upgrades
-      if (request.headers.get('Upgrade') === 'websocket') {
-        return await this.handleWebSocketUpgrade(request);
-      }
+    // Handle WebSocket upgrades
+    if (request.headers.get('Upgrade') === 'websocket') {
+      return await this.handleWebSocketUpgrade(request);
+    }
 
-      // Handle internal messages
-      const url = new URL(request.url);
-      if (url.hostname === 'user.internal') {
-        return await this.handleInternalMessage(request);
-      }
+    // Handle internal messages
+    const url = new URL(request.url);
+    if (url.hostname === 'user.internal') {
+      return await this.handleInternalMessage(request);
+    }
 
-      // Handle API requests
-      switch (url.pathname) {
-        case '/status':
-          return await this.getWebsocketStatus();
-        case '/subscriptions':
-          return await this.getSubscriptionList();
-        default:
-          return new Response('Not Found', { status: 404 });
-      }
-    } catch (e) {
-      handleError(e, "UserDO fetch failed");
-      return new Response('Internal Server Error', { status: 500 });
+    // Handle API requests
+    switch (url.pathname) {
+      case '/status':
+        return await this.getWebsocketStatus();
+      case '/subscriptions':
+        return await this.getSubscriptionList();
+      default:
+        throw new Error(`Unknown path: ${url.pathname}`);
     }
   }
 
@@ -268,7 +263,7 @@ export class UserDO extends DurableObject {
       await this.handleMessage(ws, parsed);
       console.log(`Processed message for user ${this.getCurrentUserId()}:`, parsed);
     } catch (e) {
-      handleError(e, `Processing message error: ${message}`);
+      handleErrorWithoutIp(e, `Processing message error: ${message}`);
       await this.sendMessage(ws, { type: 'error', message: 'Invalid message format' });
     }
   }
@@ -324,16 +319,16 @@ export class UserDO extends DurableObject {
       await this.unregisterUser();
       await this.storage.deleteAlarm();
     } catch (e) {
-      handleError(e, "UserDO WebSocket closed error");
+      handleErrorWithoutIp(e, "UserDO WebSocket closed error");
     }
   }
 
   async webSocketError(ws: WebSocket, error: unknown) {
-    handleError(error, `UserDO ${this.getCurrentUserId()} WebSocket error`);
+    handleErrorWithoutIp(error, `UserDO ${this.getCurrentUserId()} WebSocket error`);
     try {
       ws.close(1011, 'Internal server error');
     } catch (closeError) {
-      handleError(closeError, "Close webSocket error in UserDO WebSocket error");
+      handleErrorWithoutIp(closeError, "Close webSocket error in UserDO WebSocket error");
     }
   }
 
@@ -344,7 +339,7 @@ export class UserDO extends DurableObject {
     try {
       await this.handlePeriodicTasks();                        
     } catch (error) {
-      handleError(error, "Alarm execution error");
+      handleErrorWithoutIp(error, "Alarm execution error");
       await this.storage.setAlarm(Date.now() + RETRY_ALARM_INTERVAL); 
     }
   }
@@ -416,7 +411,7 @@ export class UserDO extends DurableObject {
       try {
         await this.storePendingMessage(message);
       } catch (e) {
-        handleError(e, "Store pending message error");
+        handleErrorWithoutIp(e, "Store pending message error");
       }
     }
 
@@ -426,7 +421,7 @@ export class UserDO extends DurableObject {
       try {
         ws.close(1011, 'Send failure');
       } catch (closeError) {
-        handleError(closeError, "Close webSocket error in Send failure");
+        handleErrorWithoutIp(closeError, "Close webSocket error in Send failure");
       }
     }
   }

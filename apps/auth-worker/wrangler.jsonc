@@ -41,7 +41,6 @@
 	},
 	// "placement": { "mode": "smart" }
 	"vars": {
-		
 		"FRONTEND_URL": "https://beta.unitoken.trade",
 		"BASE_URL": "https://api.unitoken.trade",
 		"DEBUG": "true"
