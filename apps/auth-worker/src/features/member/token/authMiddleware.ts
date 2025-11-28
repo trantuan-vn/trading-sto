@@ -1,72 +1,72 @@
 import { Context, Next } from 'hono';
 import { createTokenApplicationService } from './application.js';
 import { handleError, getClientIp } from '../../../shared/utils';
-import { SECURITY_CONFIG } from './constant';
-import { isValidAuthHeader, isValidTokenFormat, sanitizeTokenData, 
-  validatePermissions, addSecurityHeaders, isValidTokenStructure, isValidClientId } from './utils';
+import { TOKEN_CONSTANTS, ERROR_MESSAGES } from './constant';
+import { 
+  tokenValidationUtils, 
+  securityUtils 
+} from './utils';
 
 export function createTokenValidationMiddleware(bindingName: string) {
   return async (c: Context, next: Next) => {
     try {
-      // Luôn xóa user cũ trước khi xác thực lại
+      // Luôn xóa token data cũ trước khi xác thực lại
       c.set('tokenData', undefined);
       
       const clientId = c.req.header('X-Client-ID') || c.req.query('client_id');
       
       if (!clientId) {
-        throw new Error('Missing client ID');
+        throw new Error(ERROR_MESSAGES.TOKEN.INVALID_CLIENT_ID);
       }
 
-      if (!isValidClientId(clientId)) {
-        throw new Error('Invalid client ID');
+      if (!tokenValidationUtils.isValidClientId(clientId)) {
+        throw new Error(ERROR_MESSAGES.TOKEN.INVALID_CLIENT_ID);
       }
 
       // Lấy token từ header Authorization Bearer
       const authHeader = c.req.header('Authorization');
       
       if (authHeader) {
-        // 2. Input Validation - Protection against injection attacks
-        if (!isValidAuthHeader(authHeader)) {
+        // Input Validation - Protection against injection attacks
+        if (!tokenValidationUtils.isValidAuthHeader(authHeader)) {
           throw new Error('Invalid authorization header format');
         }
 
         const token = authHeader.substring(7); // Lấy phần sau "Bearer "
         
-        // 3. Token Length Validation - Prevention of DoS attacks
-        if (!token || token.length > SECURITY_CONFIG.MAX_TOKEN_LENGTH) {
-          throw new Error('Invalid token');
+        // Token Length Validation - Prevention of DoS attacks
+        if (!token || token.length > TOKEN_CONSTANTS.MAX_TOKEN_LENGTH) {
+          throw new Error(ERROR_MESSAGES.TOKEN.INVALID_TOKEN);
         }
 
-        // 4. Token Format Validation - Basic sanitization
-        if (!isValidTokenFormat(token)) {
+        // Token Format Validation - Basic sanitization
+        if (!tokenValidationUtils.isValidTokenFormat(token)) {
           throw new Error('Invalid token format');
         }
 
         const applicationService = createTokenApplicationService(c, bindingName);
         
-        // 5. Timeout Protection - Prevention of DoS attacks
+        // Timeout Protection - Prevention of DoS attacks
         const validationPromise = applicationService.validateApiTokenUseCase(clientId, token);
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Token validation timeout')), SECURITY_CONFIG.TOKEN_TIMEOUT_MS)
+          setTimeout(() => reject(new Error(ERROR_MESSAGES.TOKEN.TOKEN_VALIDATION_TIMEOUT)), TOKEN_CONSTANTS.TOKEN_TIMEOUT_MS)
         );
 
         const validationResult = await Promise.race([validationPromise, timeoutPromise]) as any;
         
         if (!validationResult.isValid) {
-          throw new Error(validationResult.error || 'Invalid token');
+          throw new Error(validationResult.error || ERROR_MESSAGES.TOKEN.INVALID_TOKEN);
         }
 
-        // 6. Token Data Sanitization
-        const sanitizedTokenData = sanitizeTokenData(validationResult.token);
+        // Token Data Sanitization
+        const sanitizedTokenData = securityUtils.sanitizeTokenData(validationResult.token);
         c.set('tokenData', sanitizedTokenData);
-        
       }
       
       await next();
     } catch (error) {
-      const { errorResponse, status } = await handleError(c, error, 'Failed to validate token');
-      // 7. Security Headers
-      addSecurityHeaders(c);
+      const { errorResponse, status } = await handleError(c, error, 'Token validation failed');
+      securityUtils.addSecurityHeaders(c);
       return c.json(errorResponse, status);
     }
   };
@@ -80,21 +80,18 @@ export function requirePermissions(c: Context, permissions: string[]) {
         throw new Error('Not authenticated');
     }
 
-    // 8. Enhanced Token Validation
-    if (!isValidTokenStructure(token)) {
+    // Enhanced Token Validation
+    if (!tokenValidationUtils.isValidTokenStructure(token)) {
         throw new Error('Invalid token structure');
     }
 
-    // 9. Permission Validation
-    validatePermissions(token, permissions);
+    // Permission Validation
+    securityUtils.validatePermissions(token, permissions);
     
     return token;
 }
 
-// Additional security middleware for comprehensive protection
-
-
-// Logging middleware for security monitoring
+// Security monitoring middleware
 export function securityLoggingMiddleware() {
   return async (c: Context, next: Next) => {
     const startTime = Date.now();
@@ -114,8 +111,31 @@ export function securityLoggingMiddleware() {
       userId: tokenData?.id || 'anonymous',
       clientIP: getClientIp(c),
       userAgent: c.req.header('user-agent'),
-      event: 'api_request'
+      event: 'api_token_request'
     };
+    
     console.log(JSON.stringify(logEntry));
+  };
+}
+
+// Rate limiting middleware
+export function createTokenRateLimitMiddleware() {
+  return async (c: Context, next: Next) => {
+    const clientId = c.req.header('X-Client-ID');
+    if (!clientId) return await next();
+
+    const key = `token_rate_limit:${clientId}`;
+    const data = await c.env.KV.get(key);
+    
+    if (data) {
+      const { count, resetTime } = JSON.parse(data);
+      if (Date.now() < resetTime && count >= TOKEN_CONSTANTS.RATE_LIMIT_MAX) {
+        return c.json({ 
+          error: ERROR_MESSAGES.TOKEN.RATE_LIMIT_EXCEEDED 
+        }, 429);
+      }
+    }
+    
+    await next();
   };
 }

@@ -4,308 +4,243 @@ import { UserDO } from '../ws/infrastructure/UserDO';
 import { SiweMessage } from 'siwe';
 
 import { OAuthProvider, Session } from './domain';
-import { getOAuthConfig, getOAuthScopes, generateWallet, isValidEmail, isValidPhone, 
-  generateAccessToken, generateRefreshToken, verifyJWT, normalizeIdentifier, validateSession } from './utils';
+import { 
+  jwtUtils, 
+  validationUtils, 
+  walletUtils, 
+  oauthUtils,
+} from './utils';
 import { createOAuthService, createRepository, createOTPService, createWalletService } from './infrastructure';
-import { AUTH_CONSTANTS } from './constant';
-
+import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
 interface IApplicationService {
   // I. OAUTH
-  getAuthUrlUseCase(provider: OAuthProvider, sessionId: string): Promise<{sessionId: string, authUrl: string}>;
-  exchangeOAuthCodeUseCase(provider: string, sessionId: string, state: string, code: string ): Promise<any>;
+  getAuthUrlUseCase(provider: OAuthProvider, sessionId: string): Promise<string>;
+  exchangeOAuthCodeUseCase(provider: string, sessionId: string, state: string, code: string): Promise<any>;
   connectOAuthUseCase(sessionId: string, identifier: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }>;
+  
   // II. EMAIL/PHONE
   getRequestOtpUseCase(identifier: string, sessionId: string): Promise<void>;
   verifyOtpUseCase(identifier: string, sessionId: string, otp: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }>;
+  
   // III. WALLET
   generateNonceUseCase(sessionId: string): Promise<string>;
   verifySignatureUseCase(sessionId: string, message: string, signature: string): Promise<SiweMessage>;
   connectWalletUseCase(sessionId: string, address: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }>;
+  
   // IV. Common
   logoutUseCase(identifier: string, sessionId: string): Promise<void>;
-  logoutAllUseCase(identifier: string, sessionId: string): Promise<void>;
-  verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ok: boolean; user: any}>;
-  refreshTokenUseCase(sessionId: string, refreshToken: string): Promise<{ok: boolean; user: any; token: string, refreshToken: string}>;
+  logoutAllUseCase(identifier: string): Promise<void>;
+  verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ ok: boolean; user: any }>;
+  refreshTokenUseCase(sessionId: string, refreshToken: string): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }>;
 }
 
 export function createApplicationService(c: Context, bindingName: string): IApplicationService {
+  const getRepository = (identifier: string) => {
+    const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
+    if (!userDO) throw new Error(ERROR_MESSAGES.AUTH.USER_NOT_FOUND);
+    return createRepository(userDO);
+  };
+
+  const createUserSession = async (
+    repository: any,
+    sessionId: string,
+    user: any,
+    type: 'otp' | 'siwe' | 'oauth',
+    ipAddress: string,
+    userAgent: string
+  ) => {
+    
+    const token = await jwtUtils.generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
+    
+    const refreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
+
+    const sessionData: Session = {
+      hashSessionId: sessionId,
+      type,
+      expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(),
+      token,
+      refreshToken,
+      ipAddress,
+      userAgent,
+      isActive: true,
+    };
+
+    await repository.sessions.create(sessionData);
+    return { token, refreshToken };
+  };
+
+  const getOrCreateUser = async (repository: any, identifier: string, additionalData: any = {}) => {
+    const user = await repository.users.get();
+    
+    if (user) return user;
+
+    const baseUser = {
+      identifier: validationUtils.normalizeIdentifier(identifier),
+      role: isAdmin(identifier) ? 'admin' : 'member',
+      ...additionalData
+    };
+
+    // Generate wallet for new users (except wallet connections)
+    if (!additionalData.address) {
+      const wallet = await walletUtils.generateWallet(c.env.ENCRYPTION_SECRET);
+      Object.assign(baseUser, {
+        address: wallet.address,
+        privateKey: wallet.privateKey,
+        mnemonicPhrase: wallet.mnemonicPhrase,
+      });
+    }
+
+    // Set email/phone based on identifier type
+    if (validationUtils.isValidEmail(identifier)) {
+      Object.assign(baseUser, { email: identifier });
+    } else if (validationUtils.isValidPhone(identifier)) {
+      Object.assign(baseUser, { phone: identifier });
+    }
+
+    return await repository.users.save(baseUser);
+  };
+
   return {
     // I. OAUTH
-    async getAuthUrlUseCase(provider: OAuthProvider, sessionId: string): Promise<{sessionId: string, authUrl: string}> {
-
+    async getAuthUrlUseCase(provider: OAuthProvider, sessionId: string): Promise<string> {
       const oauthService = createOAuthService(c.env);      
       const state = await oauthService.generateState(sessionId);
 
-      const config = getOAuthConfig(provider, c.env);
+      const config = oauthUtils.getOAuthConfig(provider, c.env);
       const params = new URLSearchParams({
         client_id: config.clientId,
         redirect_uri: config.redirectUri,
         response_type: 'code',
-        scope: getOAuthScopes(provider),
-        state: state, 
+        scope: oauthUtils.getOAuthScopes(provider),
+        state,
       });
-    
-      switch (provider) {
-        case 'google':
-          return { sessionId, authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params}` };
-        case 'apple':
-          return { sessionId, authUrl: `https://appleid.apple.com/auth/authorize?${params}` };
-        case 'facebook':
-          return { sessionId, authUrl: `https://www.facebook.com/v18.0/dialog/oauth?${params}` };
-        case 'github':
-          return { sessionId, authUrl: `https://github.com/login/oauth/authorize?${params}` };
-        case 'twitter':
-          return { sessionId, authUrl: `https://x.com/i/oauth2/authorize?${params}` };
-        default:
-          throw new Error(`Unsupported provider: ${provider}`);
-      }
+
+      const endpoints: Record<OAuthProvider, string> = {
+        google: `https://accounts.google.com/o/oauth2/v2/auth?${params}`,
+        apple: `https://appleid.apple.com/auth/authorize?${params}`,
+        facebook: `https://www.facebook.com/v18.0/dialog/oauth?${params}`,
+        github: `https://github.com/login/oauth/authorize?${params}`,
+        twitter: `https://x.com/i/oauth2/authorize?${params}`
+      };
+
+      return endpoints[provider];
     },
-    async exchangeOAuthCodeUseCase(provider: string, sessionId: string, state: string, code: string ): Promise<any>{
+
+    async exchangeOAuthCodeUseCase(provider: string, sessionId: string, state: string, code: string): Promise<any> {
       const oauthService = createOAuthService(c.env);      
-      const tokenData= await oauthService.exchangeOAuthCode(provider, sessionId, state, code);
+      const tokenData = await oauthService.exchangeOAuthCode(provider, sessionId, state, code);
       return await oauthService.getUserInfoFromProvider(provider, tokenData.access_token);      
     },
+
     async connectOAuthUseCase(sessionId: string, identifier: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
-      let user: any;
-      
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName); 
-      const repository = createRepository(userDO);
-
-      try {
-        // Try to get existing user
-        user = await repository.users.get();
-        if (!user) throw new Error('User not found');
-
-      } catch (error) {
-        // User doesn't exist, create new one
-        const wallet = await generateWallet(c.env.ENCRYPTION_SECRET);
-        user = {
-          identifier,
-          role: isAdmin(identifier) ? 'admin' : 'member',
-          address: wallet.address,
-          privateKey: wallet.privateKey,
-          mnemonicPhrase: wallet.mnemonicPhrase,
-        };
-        // Update email
-        if (isValidEmail(identifier)) {
-          user.email = identifier;
-        } 
-        // Save user data
-        user = await repository.users.save(user);
-      }
-      // Generate tokens
-      const token = await generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-      const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
-
-      const sessionData: Session = {
-        hashSessionId: sessionId,
-        type: 'oauth',
-        expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        token,
-        refreshToken,
-        ipAddress,
-        userAgent,
-        isActive: true,
-      };
-      await repository.sessions.create(sessionData);      
-  
-      return { token, refreshToken };      
+      const repository = getRepository(identifier);
+      const user = await getOrCreateUser(repository, identifier);
+      return await createUserSession(repository, sessionId, user, 'oauth', ipAddress, userAgent);
     },
+
     // II. EMAIL/PHONE
     async getRequestOtpUseCase(identifier: string, sessionId: string): Promise<void> {
-
       const otpService = createOTPService(c.env);
-      
-      const otp= await otpService.generateOTP(sessionId);
+      const otp = await otpService.generateOTP(sessionId);
+      const nIdentifier = validationUtils.normalizeIdentifier(identifier);
 
-      const nIdentifier= normalizeIdentifier(identifier);
-      if (isValidEmail(nIdentifier)) {
+      if (validationUtils.isValidEmail(nIdentifier)) {
         await otpService.sendEmailOTP(nIdentifier, otp);
-      }
-      if (isValidPhone(nIdentifier)) {
+      } else if (validationUtils.isValidPhone(nIdentifier)) {
         await otpService.sendSmsOTP(nIdentifier, otp, "VONAGE");
       }
     },
+
     async verifyOtpUseCase(identifier: string, sessionId: string, otp: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
       const otpService = createOTPService(c.env);
-      
       const isValid = await otpService.verifyOTP(otp, sessionId);
       if (!isValid) {
-        throw new Error('Invalid OTP');
+        throw new Error(ERROR_MESSAGES.AUTH.INVALID_OTP);
       }
-      const nIdentifier= normalizeIdentifier(identifier);
-      const userDO = getIdFromName<UserDO>(c, nIdentifier, bindingName);
-      const repository = createRepository(userDO);   
-      let user: any;
-      try {
-        user = await repository.users.get();
-        if (!user) throw new Error('User not found');
-      } catch (error) {
-        // User doesn't exist, create new one
-        const wallet = await generateWallet(c.env.ENCRYPTION_SECRET);
-        user = {
-          identifier: nIdentifier,
-          role: isAdmin(nIdentifier) ? 'admin' : 'member',
-          address: wallet.address,
-          privateKey: wallet.privateKey,
-          mnemonicPhrase: wallet.mnemonicPhrase,
-          }
-      }
-      // Update email
-      if (isValidEmail(nIdentifier)) {
-        user.email = nIdentifier;
-      } 
-      // Update phone
-      if (isValidPhone(nIdentifier)) {
-        user.phone = nIdentifier;    
-      }
-      // Save user data
-      await repository.users.save(user);
-      
-      // Generate tokens
-      const token = await generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-      const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);      
 
-      const sessionData: Session = {
-        hashSessionId: sessionId,
-        type: 'otp',
-        expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        token,
-        refreshToken,
-        ipAddress,
-        userAgent,
-        isActive: true,
-      };
-      await repository.sessions.create(sessionData);      
-
-      return { token, refreshToken };          
+      const repository = getRepository(identifier);
+      const user = await getOrCreateUser(repository, identifier);
+      return await createUserSession(repository, sessionId, user, 'otp', ipAddress, userAgent);
     },
+
     // III. WALLET
     async generateNonceUseCase(sessionId: string): Promise<string> {
       const walletService = createWalletService(c.env);      
       return await walletService.generateNonceAndStore(sessionId);
     },
+
     async verifySignatureUseCase(sessionId: string, message: string, signature: string): Promise<SiweMessage> {
       const walletService = createWalletService(c.env);      
-      return await walletService.verifySignature(sessionId, message, signature);
+      return await walletService.verifySignature(sessionId, message, signature, c.env.SIWE_DOMAIN, c.env.FRONTEND_URL);
     },
+
     async connectWalletUseCase(sessionId: string, address: string, ipAddress: string, userAgent: string): Promise<{ token: string; refreshToken: string }> {
-      const userDO = getIdFromName<UserDO>(c, address, bindingName); 
-      const repository = createRepository(userDO);
-      // Try to get existing user
-      let user: any;
-      try {
-        user = await repository.users.get();
-        if (!user) throw new Error('User not found');
-      } catch (error) {
-        user = {
-            identifier: address,
-            role: isAdmin(address) ? 'admin' : 'member',
-            address: address,
-        };
-      }
-      // Save user data
-      await repository.users.save(user);
-      // Generate tokens
-      const token = await generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-      const refreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
-
-      const sessionData: Session = {
-        hashSessionId: sessionId,
-        type: 'siwe',
-        expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString(), 
-        token,
-        refreshToken,
-        ipAddress,
-        userAgent,
-        isActive: true,
-      };
-      await repository.sessions.create(sessionData);      
-
-      return { token, refreshToken };          
+      const repository = getRepository(address);
+      const user = await getOrCreateUser(repository, address, { address });
+      return await createUserSession(repository, sessionId, user, 'siwe', ipAddress, userAgent);
     },
+
     // IV. Common
     async logoutUseCase(identifier: string, sessionId: string): Promise<void> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const repository = createRepository(userDO);
+      const repository = getRepository(identifier);
       await repository.sessions.update(sessionId, { isActive: false });
     },
-    async logoutAllUseCase(identifier: string, sessionId: string): Promise<void>{
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const repository = createRepository(userDO);
-      await repository.sessions.deactivateAllUserSessions(userDO.getCurrentUserId());
+
+    async logoutAllUseCase(identifier: string): Promise<void> {
+      const repository = getRepository(identifier);
+      await repository.sessions.deactivateAllUserSessions(identifier);
     },
-    async verifyTokenUseCase(
-      sessionId: string, 
-      token: string, 
-      refreshToken: string
-    ): Promise<{ ok: boolean; user: any }> {
 
-
-      // Verify JWT token
-      const result = await verifyJWT(token, c.env.JWT_SECRET);
+    async verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ ok: boolean; user: any }> {
+      const result = await jwtUtils.verifyJWT(token, c.env.JWT_SECRET);
       if (!result.ok) {
-        throw new Error(result.error ?? 'Invalid token');
+        throw new Error(result.error ?? ERROR_MESSAGES.AUTH.INVALID_TOKEN);
       }
       
       const identifier = result.payload?.identifier;
       if (!identifier) {
-        throw new Error('Invalid identifier');
+        throw new Error(ERROR_MESSAGES.AUTH.INVALID_TOKEN);
       }
 
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const repository = createRepository(userDO);
-      
-      // Get user and validate
+      const repository = getRepository(identifier);
       const user = await repository.users.get();
       if (!user) {
-        throw new Error('User not found');
+        throw new Error(ERROR_MESSAGES.AUTH.USER_NOT_FOUND);
       }
 
-      // Validate session
       const session = await repository.sessions.findById(sessionId);
-      validateSession(session, token, refreshToken);
+      validationUtils.validateSession(session, token, refreshToken);
 
       return { ok: true, user };
     },
 
-    async refreshTokenUseCase(
-      sessionId: string, 
-      refreshToken: string
-    ): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }> {
-      // Verify refresh token
-      const result = await verifyJWT(refreshToken, c.env.JWT_SECRET);
+    async refreshTokenUseCase(sessionId: string, refreshToken: string): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }> {
+      const result = await jwtUtils.verifyJWT(refreshToken, c.env.JWT_SECRET);
       if (!result.ok) {
         const errorMessage = result.error
           ?.replace('token', 'refreshToken')
-          ?.replace('Token', 'RefreshToken') ?? 'Invalid refreshToken';
+          ?.replace('Token', 'RefreshToken') ?? ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN;
         throw new Error(errorMessage);
       }
 
       const identifier = result.payload?.identifier;
       if (!identifier) {
-        throw new Error('Invalid identifier');
+        throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
       }
 
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const repository = createRepository(userDO);
-      
-      // Get user and validate
+      const repository = getRepository(identifier);
       const user = await repository.users.get();
       if (!user) {
-        throw new Error('User not found');
+        throw new Error(ERROR_MESSAGES.AUTH.USER_NOT_FOUND);
       }
 
-      // Validate session with refresh token only
       const session = await repository.sessions.findById(sessionId);
-      validateSession(session, undefined, refreshToken);
+      validationUtils.validateSession(session, undefined, refreshToken);
 
-      // Generate new tokens
-      const newToken = await generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-      const newRefreshToken = await generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
+      const newToken = await jwtUtils.generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
+      const newRefreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
       
-      // Update session with new tokens
       await repository.sessions.update(sessionId, { 
         token: newToken, 
         refreshToken: newRefreshToken, 
@@ -319,5 +254,5 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
         refreshToken: newRefreshToken 
       };
     }
-  }
+  };
 }

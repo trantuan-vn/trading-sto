@@ -8,6 +8,7 @@ export const PaymentSchema = z.object({
   gateway: z.string().optional(),
   paymentDetails: z.record(z.any()).optional(),
 });
+
 // Refund Schema
 export const RefundSchema = z.object({
   paymentId: z.string(),
@@ -24,6 +25,7 @@ export const CreatePaymentSchema = z.object({
   language: z.enum(['vn', 'en']).default('vn'),
   orderId: z.string(),
 });
+
 export const CreateRefundSchema = z.object({
   paymentId: z.string(),
   transactionType: z.string(),

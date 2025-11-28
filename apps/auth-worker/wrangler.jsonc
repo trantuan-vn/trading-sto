@@ -13,7 +13,7 @@
 	"migrations": [
 		{
 			"tag": "v1",
-			"new_classes": [
+			"new_sqlite_classes": [
 				"BroadcastServiceDO",
 				"UserShardDO",
 				"UserDO"
@@ -23,16 +23,19 @@
 	"durable_objects": {
 		"bindings": [
 			{
-				"class_name": "BroadcastServiceDO",
-				"name": "BROADCAST_SERVICE_DO"
+				"name": "BROADCAST_SERVICE_DO",
+				"script_name": "auth-worker",
+				"class_name": "BroadcastServiceDO"
 			},
 			{
-				"class_name": "UserShardDO",
-				"name": "USER_SHARD_DO"
+				"name": "USER_SHARD_DO", 
+				"script_name": "auth-worker",
+				"class_name": "UserShardDO"
 			},
 			{
-				"class_name": "UserDO",
-				"name": "USER_DO"
+				"name": "USER_DO",
+				"script_name": "auth-worker", 
+				"class_name": "UserDO"
 			}
 		]
 	},
@@ -41,10 +44,14 @@
 	},
 	// "placement": { "mode": "smart" }
 	"vars": {
-		"FRONTEND_URL": "https://beta.unitoken.trade",
-		"BASE_URL": "https://api.unitoken.trade",
-		"DEBUG": "true"
+		
 	},
+	"r2_buckets": [
+		{
+		"binding": "R2_VERSION_BUCKET",
+		"bucket_name": "version-backup-bucket"
+		}
+	],	
 	"kv_namespaces": [
 		{
 			"binding": "NONCE_KV",

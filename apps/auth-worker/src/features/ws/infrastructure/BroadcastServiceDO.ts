@@ -1,26 +1,13 @@
-// broadcast-service-do.ts
 import { DurableObject } from 'cloudflare:workers';
 import { z } from 'zod';
-
+import { handleErrorWithoutIp } from '../../../shared/utils.js';
 import { UserDODatabase, TableOptions } from '../../../shared/database/index.js';
 import { 
-  ScaleConfig, 
-  ServiceConfigSchema,
-  ScaleConfigName, 
-  BroadcastData, 
-  BroadcastDataSchema, 
-  CreateBroadcast, 
-  DeliveryRecord, 
-  DeliveryRecordSchema, 
-  BroadcastAnalytics, 
-  DeliveryStats,
-  BroadcastResponse,
-  ScaleConfigResponse,
-  DEFAULT_SCALE_CONFIGS, 
-  DEFAULT_SERVICE_CONFIG,
-  BroadcastValidator,
-  UserShardSchema,
-  GlobalCounterSchema
+  ScaleConfig, ServiceConfigSchema, ScaleConfigName, BroadcastData, 
+  BroadcastDataSchema, CreateBroadcast, DeliveryRecordSchema, BroadcastAnalytics, 
+  DeliveryStats, BroadcastResponse, ScaleConfigResponse, DEFAULT_SCALE_CONFIGS, 
+  DEFAULT_SERVICE_CONFIG, BroadcastValidator, UserShardSchema, GlobalCounterSchema,
+  PricePolicySchema, ServiceSchema, VoucherSchema
 } from '../domain';
 
 export class BroadcastServiceDO extends DurableObject {
@@ -28,273 +15,229 @@ export class BroadcastServiceDO extends DurableObject {
   protected storage: DurableObjectStorage;
   protected env: Env;
   protected database: UserDODatabase;
-  
-  // Table instances
-  private broadcasts;
-  private deliveryRecords;
-  private serviceConfigs;
-  private userShards;
-  private globalCounters;
-  
+  private broadcasts: any;
+  private deliveryRecords: any;
+  private serviceConfigs: any;
+  private userShards: any;
+  private globalCounters: any;
   private scaleConfig: ScaleConfig = DEFAULT_SCALE_CONFIGS['1M+'];
   private scaleConfigName: ScaleConfigName = '1M+';
 
   constructor(state: DurableObjectState, env: Env) {
     super(state, env);
     this.state = state;
-    this.env = env;
     this.storage = state.storage;
-
-    this.database = new UserDODatabase(
-      this.storage,
-      this.getCurrentUserId()
-    );
+    this.env = env;
+    this.database = new UserDODatabase(this.storage, this.userId);
     
-    // Initialize tables with extracted schemas
-    this.broadcasts = this.table('broadcasts', BroadcastDataSchema);
-    this.deliveryRecords = this.table('delivery_records', DeliveryRecordSchema);
-    this.serviceConfigs = this.table('service_configs', ServiceConfigSchema);
-    this.userShards = this.table('user_shards', UserShardSchema);
-    this.globalCounters = this.table('global_counters', GlobalCounterSchema);
-
     this.state.blockConcurrencyWhile(async () => {
+      this.broadcasts = this.table('broadcasts', BroadcastDataSchema);
+      this.deliveryRecords = this.table('delivery_records', DeliveryRecordSchema);
+      this.serviceConfigs = this.table('service_configs', ServiceConfigSchema);
+      this.userShards = this.table('user_shards', UserShardSchema);
+      this.globalCounters = this.table('global_counters', GlobalCounterSchema);
+            
       await this.initialize();
     });
   }
 
   // =============================================
-  // I. GETTER METHODS
+  // GETTERS & INITIALIZATION
   // =============================================
-  getState(): DurableObjectState {
-    return this.state;
-  }
+  get userId(): string { return this.state.id.toString(); }
 
-  getStorage(): DurableObjectStorage {
-    return this.storage;
-  }
-
-  getEnv(): Env {
-    return this.env;
-  }
-
-  getCurrentUserId(): string {
-    return this.state.id.toString();
-  }
-
-  table<T extends z.ZodSchema>(
-    name: string,
-    schema: T,
-    options?: TableOptions
-  ) {
+  table<T extends z.ZodSchema>(name: string, schema: T, options?: TableOptions) {
     return this.database.table(name, schema, options);
   }
 
   private async initialize() {
     const initialized = await this.globalCounters.where('key', '==', 'initialized').first();
     if (!initialized) {
-      // Initialize global counters
-      await this.globalCounters.create({
-        key: 'totalUsers',
-        value: 0,
-      });
-      
-      await this.globalCounters.create({
-        key: 'initialized',
-        value: 1,
-      });
-      
-      await this.globalCounters.create({
-        key: 'scaleConfig',
-        value: '1M+', 
-      });
-
-      // Initialize service config
-      await this.serviceConfigs.create({
-        ...DEFAULT_SERVICE_CONFIG
-      });
+      await Promise.all([
+        this.globalCounters.create({ key: 'totalUsers', value: 0 }),
+        this.globalCounters.create({ key: 'initialized', value: 1 }),
+        this.globalCounters.create({ key: 'scaleConfig', value: '1M+' }),
+        this.serviceConfigs.create(DEFAULT_SERVICE_CONFIG)
+      ]);
     }
     
-    // Load scale config
     const configRecord = await this.globalCounters.where('key', '==', 'scaleConfig').first();
-    const configName = (configRecord?.value as ScaleConfigName) || '1M+';
-    this.scaleConfigName = configName;
-    this.scaleConfig = DEFAULT_SCALE_CONFIGS[configName];
+    this.scaleConfigName = (configRecord?.value as ScaleConfigName) || '1M+';
+    this.scaleConfig = DEFAULT_SCALE_CONFIGS[this.scaleConfigName];
   }
 
   // =============================================
-  // I. REQUEST HANDLER
+  // REQUEST HANDLER
   // =============================================
   async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const path = url.pathname;
+    try {
+      const url = new URL(request.url);
+      
+      if (url.hostname === 'broadcast.internal') {
+        return await this.handleInternalMessage(request);
+      }
 
-    // Xử lý internal messages
-    if (url.hostname === 'broadcast.internal') {
-      return await this.handleInternalMessage(request);
-    }
+      const routes: { [key: string]: Function } = {
+        '/broadcast': () => request.method === 'POST' ? this.handleCreateBroadcast(request) : null,
+        '/analytics': () => request.method === 'GET' ? this.getBroadcastAnalytics(url.searchParams.get('broadcastId') || '') : null,
+        '/scale': () => request.method === 'POST' ? this.handleUpdateScaleConfig(request) : null,
+        '/health': () => this.getHealthStatus(),
+        '/stats': () => this.getServiceStats()
+      };
 
-    switch (path) {
-      case '/broadcast':
-        if (request.method === 'POST') {
-          return await this.handleCreateBroadcast(request);
-        }
-        break;
-        
-      case '/analytics':
-        if (request.method === 'GET') {
-          const broadcastId = url.searchParams.get('broadcastId');
-          if (broadcastId) {
-            return await this.getBroadcastAnalytics(broadcastId);
-          }
-        }
-        break;
-        
-      case '/scale':
-        if (request.method === 'POST') {
-          return await this.handleUpdateScaleConfig(request);
-        }
-        break;
-        
-      case '/health':
-        return await this.getHealthStatus();
-        
-      case '/stats':
-        return await this.getServiceStats();
-        
-      default:
-        throw new Error(`Unknown path: ${path}`);
-    }
-
-    throw new Error('Method not allowed');
+      const handler = routes[url.pathname];
+      if (handler) return await handler() || new Response('Method not allowed', { status: 405 });
+      
+      throw new Error(`Unknown path: ${url.pathname}`);
+    } catch (error) {
+      handleErrorWithoutIp(error, `BroadcastServiceDO ${this.userId} Fetch error`);
+      return new Response("Internal Server Error", { status: 500 });
+    }    
   }
 
   // =============================================
-  // II. INTERNAL MESSAGE HANDLER
+  // INTERNAL MESSAGE HANDLER
   // =============================================
   private async handleInternalMessage(request: Request): Promise<Response> {
-    // Ép kiểu rõ ràng cho dữ liệu JSON
-    const body = await request.json() as {
-      action: string;
-      [key: string]: any;
-    };
+    const url = new URL(request.url);
+    
+    if (url.pathname.startsWith('/repository/')) {
+      return await this.handleRepositoryOperations(request, url.pathname);
+    }
 
+    const body = await request.json() as { action: string; [key: string]: any };
     const { action, ...data } = body;
     
-    switch (action) {
-      case 'delivery_report':
-        await this.handleDeliveryReport(data);
-        break;
-      case 'shard_health':
-        await this.handleShardHealthReport(data);
-        break;
-      default:
-        throw new Error(`Unknown action: ${action}`);
-        
-    }
+    const actions: { [key: string]: Function } = {
+      delivery_report: () => this.handleDeliveryReport(data),
+      registerUser: () => this.registerUser(data.userId),
+      unregisterUser: () => this.unregisterUser(data.userId)
+    };
+
+    if (actions[action]) await actions[action]();
     return new Response(JSON.stringify({ status: 'processed' }));
   }
 
-  private async handleDeliveryReport(data: any) {
-    const { broadcastId, deliveredCount, shardName } = data;
+  private async handleRepositoryOperations(request: Request, path: string): Promise<Response> {
+    const data = await request.json() as any;
     
+    const operations: { [key: string]: Function } = {
+      '/repository/transaction': () => this.database.execTransaction(data.operations),
+      '/repository/select': async () => {
+        const result = await this.database.execSelectSQL(data.sql, data.params || []);
+        return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
+      },
+      '/repository/action': () => this.handleRepositoryAction(data)
+    };
+
+    if (operations[path]) {
+      const result = await operations[path]();
+      return result instanceof Response ? result : new Response(JSON.stringify(result));
+    }
+    
+    return new Response('Not found', { status: 404 });
+  }
+
+  private async handleRepositoryAction(data: any): Promise<Response> {
+    const { table, operation, data: opData } = data;
+    const tableInstance = this.database.getTable(table);
+    if (!tableInstance) return new Response(`Table ${table} not found`, { status: 404 });
+
+    const operations: { [key: string]: Function } = {
+      get: () => tableInstance.findById(opData.id),
+      getAll: () => tableInstance.getAll(),
+      insert: () => tableInstance.create(opData),
+      update: () => tableInstance.update(opData.id, opData),
+      delete: () => tableInstance.delete(opData.id),
+      create: () => tableInstance.create(opData),
+      findById: () => tableInstance.findById(opData.id),
+      count: () => tableInstance.count(),
+      where: () => tableInstance.where(opData.path, opData.operator, opData.value).get(),
+      orderBy: () => tableInstance.orderBy(opData.field, opData.direction).get(),
+      limit: () => tableInstance.limit(opData.count).get(),
+      first: () => tableInstance.limit(1).first(),
+      broadcast: () => { 
+        tableInstance.broadcastToUser(opData.event, opData.broadcastData);  
+        return { success: true, message: 'Broadcast sent' };
+      }
+    };
+
+    if (!operations[operation]) {
+      return new Response(`Invalid operation: ${operation}`, { status: 400 });
+    }
+
+    const result = await operations[operation]();
+    return new Response(JSON.stringify(result));
+  }
+
+  private async handleDeliveryReport(data: any) {
+    const { broadcastId, deliveredCount } = data;
     if (broadcastId && deliveredCount) {
       await this.updateDeliveryCount(broadcastId, deliveredCount);
-      console.log(`📊 Shard ${shardName} reported ${deliveredCount} deliveries for ${broadcastId}`);
     }
   }
 
-  private async handleShardHealthReport(data: any) {
-    // Xử lý báo cáo health từ shard nếu cần
-    console.log(`🏥 Shard health report:`, data);
-  }
-
   // =============================================
-  // II. BROADCAST MANAGEMENT
+  // BROADCAST MANAGEMENT
   // =============================================
   private async handleCreateBroadcast(request: Request): Promise<Response> {
-    const body = await request.json();
-    const createData: CreateBroadcast = BroadcastValidator.validateCreateBroadcast(body);
-    
+    const createData: CreateBroadcast = BroadcastValidator.validateCreateBroadcast(await request.json());
     const broadcastId = await this.createBroadcast(createData);
-    const estimatedUsers = await this.getTotalUsers();
     
     const response: BroadcastResponse = {
       broadcastId,
       status: 'started',
       config: this.scaleConfig,
-      estimatedUsers,
+      estimatedUsers: await this.getTotalUsers(),
       queuePosition: 0
     };
 
-    return new Response(JSON.stringify(response), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(response), { headers: { 'Content-Type': 'application/json' } });
   }
 
   async createBroadcast(createData: CreateBroadcast): Promise<string> {
-    
     const broadcastData: BroadcastData = {
       message: BroadcastValidator.sanitizeBroadcastMessage(createData.message),
       timestamp: Date.now(),
       status: 'pending',
       delivered: 0,
-      total: createData.targetUsers ? createData.targetUsers.length : 0,
+      total: createData.targetUsers?.length || 0,
       targetUsers: createData.targetUsers || null,
       priority: createData.priority || 'normal',
       expiresAt: createData.expiresIn ? Date.now() + createData.expiresIn : undefined,
       retryCount: 0
     };
 
-    const broadcast= await this.broadcasts.create(broadcastData);
-
-    // Trigger async processing với FULL MESSAGE DATA
-    this.state.waitUntil(this.processBroadcastWithMessage(broadcast.id, broadcast.message, createData.targetUsers));
+    const broadcast = await this.broadcasts.create(broadcastData);
+    this.ctx.waitUntil(this.processBroadcastWithMessage(broadcast.id, broadcast.message, createData.targetUsers));
     
     return broadcast.id;
   }
 
-  async getBroadcastData<T = any>(broadcastId: string): Promise<T | undefined> {
-    if (!BroadcastValidator.validateBroadcastId(broadcastId)) {
-      return undefined;
-    }
-    return await this.broadcasts.findById(broadcastId) as T;
-  }
-
-  // PHƯƠNG THỨC MỚI: Xử lý broadcast với full message data
   private async processBroadcastWithMessage(broadcastId: string, message: any, targetUsers?: string[]) {
     try {
-      let broadcastData = await this.getBroadcastData<BroadcastData>(broadcastId);
-      if (!broadcastData) {
-        throw new Error(`Broadcast ${broadcastId} not found`);
-      }
+      let broadcastData = await this.broadcasts.findById(broadcastId);
+      if (!broadcastData) throw new Error(`Broadcast ${broadcastId} not found`);
 
-      // Update status
       broadcastData.status = 'processing';
       broadcastData.startedAt = Date.now();
       await this.broadcasts.update(broadcastId, broadcastData);
 
-      let userShards: string[] = [];
+      let userShards: string[];
       let totalUsers = 0;
 
       if (targetUsers) {
-        // Targeted broadcast - calculate shards from target users
-        const shardMap = new Map<string, string[]>(); // shardName -> userIds[]
+        const shardMap = new Map<string, string[]>();
         for (const userId of targetUsers) {
           if (BroadcastValidator.validateUserId(userId)) {
             const shardName = this.getShardForUser(userId);
-            if (!shardMap.has(shardName)) {
-              shardMap.set(shardName, []);
-            }
+            if (!shardMap.has(shardName)) shardMap.set(shardName, []);
             shardMap.get(shardName)!.push(userId);
           }
         }
         userShards = Array.from(shardMap.keys());
-        totalUsers = targetUsers.length;
-        
-        // Lưu shard distribution với user lists
-        await this.storage.put(`shard_dist_${broadcastId}`, Object.fromEntries(shardMap));
+        totalUsers = targetUsers.length;        
       } else {
-        // Global broadcast - get all shards
         userShards = await this.getAllShards();
         totalUsers = await this.getTotalUsers();
       }
@@ -302,251 +245,168 @@ export class BroadcastServiceDO extends DurableObject {
       broadcastData.total = totalUsers;
       await this.broadcasts.update(broadcastId, broadcastData);
 
-      // ĐẨY FULL MESSAGE DATA XUỐNG SHARDS
-      const broadcastPayload = {
-        broadcastId,
-        message: message, // QUAN TRỌNG: đẩy luôn message content
-        timestamp: Date.now(),
-        targetUsers: targetUsers || null,
-        expiresAt: broadcastData.expiresAt,
-        priority: broadcastData.priority
-      };
-
-      // Gửi song song đến tất cả shards - FIRE AND FORGET
+      const broadcastPayload = { broadcastId, message, timestamp: Date.now(), targetUsers, expiresAt: broadcastData.expiresAt, priority: broadcastData.priority };
       await this.broadcastToShards(userShards, broadcastPayload);
-
-      // Không cập nhật status completed ở đây, để shards báo cáo sau
-      console.log(`🚀 Broadcast ${broadcastId} sent to ${userShards.length} shards with full message data`);
 
     } catch (error) {
       await this.markBroadcastFailed(broadcastId, error);
-      throw error;
     }
   }
 
-  // PHƯƠNG THỨC MỚI: Gửi broadcast đến shards mà không chờ kết quả
   private async broadcastToShards(shards: string[], payload: any) {
     const shardPromises = shards.map(shardName => 
       this.sendToShard(shardName, 'broadcast', payload)
     );
-
-    // Không chờ kết quả - fire and forget
-    this.state.waitUntil(Promise.allSettled(shardPromises));
+    this.ctx.waitUntil(Promise.allSettled(shardPromises));
   }
 
-  // PHƯƠNG THỨC MỚI: Gửi message không đồng bộ đến shard
   private async sendToShard(shardName: string, action: string, data: any) {
-    const shardDO = this.env.USER_SHARD_DO.get(
-      this.env.USER_SHARD_DO.idFromName(shardName)
-    );
-    
-    // Sử dụng internal endpoint để giảm overhead
-    await shardDO.fetch('https://shard.internal', {
+    const shardDO = this.env.USER_SHARD_DO.get(this.env.USER_SHARD_DO.idFromName(shardName));
+    const response = await shardDO.fetch('https://shard.internal', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action, ...data })
     });    
-  }
-
-  // PHƯƠNG THỨC MỚI: Cập nhật delivery count hiệu quả hơn
-  private async updateDeliveryCount(broadcastId: string, deliveredCount: number) {
-    const broadcastData = await this.broadcasts.findById(broadcastId);
-    if (broadcastData) {
-      await this.broadcasts.update(broadcastId, {
-        ...broadcastData,
-        delivered: (broadcastData.delivered || 0) + deliveredCount,
-        lastDeliveryTime: Date.now()
-      });
-
-      // Tự động đánh dấu completed nếu đã gửi hết
-      if (broadcastData.total > 0 && (broadcastData.delivered + deliveredCount) >= broadcastData.total) {
-        await this.broadcasts.update(broadcastId, {
-          ...broadcastData,
-          status: 'completed',
-          completedAt: Date.now()
-        });
-      }
-    }
+    if (!response.ok) throw new Error(`Failed to send broadcast to shard ${shardName}: ${response.statusText}`);
   }
 
   // =============================================
-  // III. USER MANAGEMENT
+  // USER MANAGEMENT
   // =============================================
   async registerUser(userId: string) {
-    if (!BroadcastValidator.validateUserId(userId)) {
-      throw new Error('Invalid user ID');
-    }
-
     const shardName = this.getShardForUser(userId);
-    // Register user in shard
-    const shardDO = this.env.USER_SHARD_DO.get(
-      this.env.USER_SHARD_DO.idFromName(shardName)
-    );
-    await shardDO.registerUser(userId);
-    
-    // Register user in shard using table
-    const existingShard = await this.userShards.where('shardName', '==', shardName).first();
-    const now = Date.now();
-    
-    if (existingShard) {
-      await this.userShards.update(existingShard.id, {
-        userCount: existingShard.userCount + 1,
-      });
-    } else {
-      await this.userShards.create({
-        shardName,
-        userCount: 1,
-      });
-    }
+    const [existingShard, totalUsersCounter] = await Promise.all([
+      this.userShards.where('shardName', '==', shardName).first(),
+      this.globalCounters.where('key', '==', 'totalUsers').first()
+    ]);
 
-    // Update global counters
-    const totalUsersCounter = await this.globalCounters.where('key', '==', 'totalUsers').first();
-    if (totalUsersCounter) {
-      await this.globalCounters.update(totalUsersCounter.id, {
-        value: totalUsersCounter.value + 1,
-      });
-    }
+    if (!totalUsersCounter) throw new Error('Total users counter not found');
+
+    await this.database.dynamicMultiTableTransaction([
+      {
+        table: 'user_shards',
+        operation: 'upsert',
+        data: { shardName, userCount: (existingShard?.userCount || 0) + 1 }
+      },
+      {
+        table: 'global_counters',
+        operation: 'update',
+        id: totalUsersCounter.id,
+        data: { value: totalUsersCounter.value + 1 }
+      }
+    ]);
+
+    await this.executeShardOperation('registerUser', shardName, existingShard, totalUsersCounter);
   }
 
   async unregisterUser(userId: string) {
-    if (!BroadcastValidator.validateUserId(userId)) {
-      return;
-    }
-
     const shardName = this.getShardForUser(userId);
+    const [existingShard, totalUsersCounter] = await Promise.all([
+      this.userShards.where('shardName', '==', shardName).first(),
+      this.globalCounters.where('key', '==', 'totalUsers').first()
+    ]);
 
-    // Unregister user in shard
-    const shardDO = this.env.USER_SHARD_DO.get(
-      this.env.USER_SHARD_DO.idFromName(shardName)
-    );
-    await shardDO.unregisterUser(userId);
+    if (!existingShard || !totalUsersCounter) throw new Error('Shard or counter not found');
 
-    const existingShard = await this.userShards.where('shardName', '==', shardName).first();
-    const now = Date.now();
+    await this.database.dynamicMultiTableTransaction([
+      {
+        table: 'user_shards',
+        operation: 'update',
+        id: existingShard.id,
+        data: { userCount: Math.max(0, existingShard.userCount - 1) }
+      },
+      {
+        table: 'global_counters', 
+        operation: 'update',
+        id: totalUsersCounter.id,
+        data: { value: Math.max(0, totalUsersCounter.value - 1) }
+      }
+    ]);
+
+    await this.executeShardOperation('unregisterUser', shardName, existingShard, totalUsersCounter);
+  }
+
+  private async executeShardOperation(action: 'registerUser' | 'unregisterUser', shardName: string, existingShard: any, totalUsersCounter: any) {
+    const shardDO = this.env.USER_SHARD_DO.get(this.env.USER_SHARD_DO.idFromName(shardName));
+    const response = await shardDO.fetch('https://shard.internal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, userId: this.userId })
+    });
     
-    if (existingShard) {
-      await this.userShards.update(existingShard.id, {
-        userCount: Math.max(0, existingShard.userCount - 1),
-      });
-    }
-
-    // Update global counters
-    const totalUsersCounter = await this.globalCounters.where('key', '==', 'totalUsers').first();
-    if (totalUsersCounter && totalUsersCounter.value > 0) {
-      await this.globalCounters.update(totalUsersCounter.id, {
-        value: totalUsersCounter.value - 1,
-      });
+    if (!response.ok) {
+      await this.database.dynamicMultiTableTransaction([
+        {
+          table: 'user_shards',
+          operation: 'upsert',
+          data: { shardName, userCount: existingShard?.userCount || 0 }
+        },
+        {
+          table: 'global_counters',
+          operation: 'update', 
+          id: totalUsersCounter.id,
+          data: { value: totalUsersCounter.value }
+        }
+      ]);
+      throw new Error(`Failed to ${action}: ${response.statusText}`);
     }
   }
 
   // =============================================
-  // IV. DELIVERY TRACKING
+  // DELIVERY TRACKING & ANALYTICS
   // =============================================
-  async recordDelivery(broadcastId: string, userId: string) {
-    if (!BroadcastValidator.validateBroadcastId(broadcastId) || 
-        !BroadcastValidator.validateUserId(userId)) {
-      return;
-    }
-
-    try {
-      // Update broadcast delivery count
-      const broadcastData = await this.broadcasts.findById(broadcastId);
-      if (!broadcastData) return;
-
-      const updatedBroadcast = {
-        ...broadcastData,
-        delivered: (broadcastData.delivered || 0) + 1,
+  private async updateDeliveryCount(broadcastId: string, deliveredCount: number) {
+    const broadcastData = await this.broadcasts.findById(broadcastId);
+    if (broadcastData?.status === 'processing') {
+      const newDelivered = (broadcastData.delivered || 0) + deliveredCount;
+      const updates: any = {
+        delivered: newDelivered,
         lastDeliveryTime: Date.now()
       };
-      await this.broadcasts.update(broadcastId, updatedBroadcast);
 
-      // Create delivery record
-      const deliveryRecord: DeliveryRecord = {
-        broadcastId,
-        userId,
-        deliveredAt: Date.now(),
-        shardName: this.getShardForUser(userId),
-        success: true,
-        attempt: 1
-      };
-
-      await this.deliveryRecords.create(deliveryRecord);
-
-      // Log progress periodically
-      if (updatedBroadcast.delivered % 1000 === 0) {
-        console.log(`📊 Broadcast ${broadcastId}: ${updatedBroadcast.delivered}/${updatedBroadcast.total} delivered`);
+      if (broadcastData.total > 0 && newDelivered >= broadcastData.total) {
+        updates.status = 'completed';
+        updates.completedAt = Date.now();
       }
 
-    } catch (error) {      
-      await this.recordDeliveryFallback(broadcastId);
-      throw error;
+      await this.broadcasts.update(broadcastId, { ...broadcastData, ...updates });
     }
   }
 
-  private async recordDeliveryFallback(broadcastId: string) {
-    const broadcastData = await this.broadcasts.findById(broadcastId);
-    if (broadcastData) {
-      await this.broadcasts.update(broadcastId, {
-        ...broadcastData,
-        delivered: (broadcastData.delivered || 0) + 1
-      });
-    }
-  }
-
-  // =============================================
-  // V. ANALYTICS & MONITORING
-  // =============================================
   async getBroadcastAnalytics(broadcastId: string): Promise<Response> {
     if (!BroadcastValidator.validateBroadcastId(broadcastId)) {
       throw new Error('Invalid broadcast ID');
     }
 
     const stats = await this.getDeliveryStats(broadcastId);
-    if (!stats) {
-      throw new Error('Broadcast not found');
-    }
+    if (!stats) throw new Error('Broadcast not found');
 
     const estimatedCompletionSeconds = stats.deliveryRate > 0 ? stats.pending / stats.deliveryRate : Infinity;
-    const estimatedCompletionTime = 
-      isFinite(estimatedCompletionSeconds)
-        ? new Date(Date.now() + estimatedCompletionSeconds * 1000).toISOString()
-        : null;       
-
     const analytics: BroadcastAnalytics = {
       ...stats,
-      estimatedCompletionSeconds: estimatedCompletionSeconds,
-      estimatedCompletionTime: estimatedCompletionTime,
-      status: stats.completionPercentage === 100 ? 'completed' : 
-              stats.deliveryRate > 0 ? 'in_progress' : 'stalled',
+      estimatedCompletionSeconds,
+      estimatedCompletionTime: isFinite(estimatedCompletionSeconds) ? new Date(Date.now() + estimatedCompletionSeconds * 1000).toISOString() : null,
+      status: stats.completionPercentage === 100 ? 'completed' : stats.deliveryRate > 0 ? 'in_progress' : 'stalled',
       shardProgress: await this.getShardProgress(broadcastId),
       failed: 0,
       elapsedSeconds: (Date.now() - stats.startTime) / 1000        
     };
 
-    return new Response(JSON.stringify(analytics), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(analytics), { headers: { 'Content-Type': 'application/json' } });
   }
 
   private async getDeliveryStats(broadcastId: string): Promise<DeliveryStats | null> {
     const data = await this.broadcasts.findById(broadcastId);
     if (!data) return null;
     
-    // Calculate delivery rate (deliveries per second)
     const startTime = data.startedAt || data.timestamp;
     const elapsed = (Date.now() - startTime) / 1000;
     const rate = elapsed > 0 ? data.delivered / elapsed : 0;
     
-    // Get sample deliveries using table query
     const deliveries = await this.deliveryRecords
       .where('broadcastId', '==', broadcastId)
       .limit(10)
       .get();
-
-    const sampleDeliveries = deliveries.map(record => ({
-      userId: record.userId,
-      deliveredAt: new Date(record.deliveredAt).toISOString()
-    }));
 
     return {
       broadcastId,
@@ -554,19 +414,21 @@ export class BroadcastServiceDO extends DurableObject {
       delivered: data.delivered,
       pending: Math.max(0, data.total - data.delivered),
       deliveryRate: Math.round(rate * 100) / 100,
-      completionPercentage: data.total > 0 ? 
-        Math.round((data.delivered / data.total) * 100) : 0,
+      completionPercentage: data.total > 0 ? Math.round((data.delivered / data.total) * 100) : 0,
       startTime,
       currentTime: Date.now(),
-      sampleDeliveries
+      sampleDeliveries: deliveries.map((record: any) => ({
+        userId: record.userId,
+        deliveredAt: new Date(record.deliveredAt).toISOString()
+      }))
     };
   }
 
   private async getShardProgress(broadcastId: string) {
-    const deliveries = await this.deliveryRecords
-      .where('broadcastId', '==', broadcastId)
-      .limit(1000)
-      .get();
+    const [deliveries, allShards] = await Promise.all([
+      this.deliveryRecords.where('broadcastId', '==', broadcastId).limit(1000).get(),
+      this.userShards.getAll()
+    ]);
 
     const shardCounts = new Map<string, { delivered: number, total: number }>();
     
@@ -577,8 +439,6 @@ export class BroadcastServiceDO extends DurableObject {
       shardCounts.set(shardName, current);
     }
 
-    // Get total users per shard
-    const allShards = await this.userShards.getAll();
     for (const shard of allShards) {
       const counts = shardCounts.get(shard.shardName) || { delivered: 0, total: 0 };
       counts.total = shard.userCount;
@@ -586,7 +446,6 @@ export class BroadcastServiceDO extends DurableObject {
     }
 
     const result: Record<string, { delivered: number, total: number, percentage: number }> = {};
-    
     for (const [shardName, counts] of shardCounts.entries()) {
       result[shardName] = {
         delivered: counts.delivered,
@@ -599,12 +458,10 @@ export class BroadcastServiceDO extends DurableObject {
   }
 
   // =============================================
-  // VI. SCALING & CONFIGURATION
+  // SCALING & HEALTH
   // =============================================
   private async handleUpdateScaleConfig(request: Request): Promise<Response> {
-    const body = await request.json();
-    const { scale } = body as { scale: string };
-    
+    const { scale } = await request.json() as { scale: string };
     if (!scale || !DEFAULT_SCALE_CONFIGS[scale as ScaleConfigName]) {
       throw new Error('Invalid scale');
     }
@@ -619,43 +476,28 @@ export class BroadcastServiceDO extends DurableObject {
       estimatedCapacity: this.getEstimatedCapacity()
     };
 
-    return new Response(JSON.stringify(response), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(response), { headers: { 'Content-Type': 'application/json' } });
   }
 
   async updateScaleConfig(scale: ScaleConfigName) {
     this.scaleConfigName = scale;
     this.scaleConfig = DEFAULT_SCALE_CONFIGS[scale];
     
-    // Update in global counters
     const configRecord = await this.globalCounters.where('key', '==', 'scaleConfigName').first();
-    const now = Date.now();
-    
     if (configRecord) {
-      await this.globalCounters.update(configRecord.id, {
-        value: scale,
-      });
+      await this.globalCounters.update(configRecord.id, { value: scale });
     } else {
-      await this.globalCounters.create({
-        key: 'scaleConfigName',
-        value: scale,
-      });
+      await this.globalCounters.create({ key: 'scaleConfigName', value: scale });
     }
   }
 
   private getEstimatedCapacity(): string {
-    const usersPerShard = 1000;
-    const totalCapacity = this.scaleConfig.SHARD_COUNT * usersPerShard;
-    
+    const totalCapacity = this.scaleConfig.SHARD_COUNT * 1000;
     if (totalCapacity >= 1000000) return `${Math.round(totalCapacity / 1000000)}M+`;
     if (totalCapacity >= 1000) return `${Math.round(totalCapacity / 1000)}K+`;
     return `${totalCapacity}+`;
   }
 
-  // =============================================
-  // VII. HEALTH & STATUS
-  // =============================================
   async getHealthStatus(): Promise<Response> {
     const [totalUsers, activeShards, serviceConfig] = await Promise.all([
       this.getTotalUsers(),
@@ -666,18 +508,11 @@ export class BroadcastServiceDO extends DurableObject {
     const health = {
       status: 'healthy' as const,
       timestamp: Date.now(),
-      metrics: {
-        totalUsers,
-        activeShards: activeShards.length,
-        scaleConfig: this.scaleConfigName,
-        deliveryRate: 0
-      },
+      metrics: { totalUsers, activeShards: activeShards.length, scaleConfig: this.scaleConfigName, deliveryRate: 0 },
       config: serviceConfig
     };
 
-    return new Response(JSON.stringify(health), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify(health), { headers: { 'Content-Type': 'application/json' } });
   }
 
   async getServiceStats(): Promise<Response> {
@@ -687,27 +522,16 @@ export class BroadcastServiceDO extends DurableObject {
       this.getRecentBroadcasts(10)
     ]);
 
-    const stats = {
-      totalUsers,
-      activeShards: activeShards.length,
-      scaleConfig: this.scaleConfigName,
-      recentBroadcasts,
-      timestamp: Date.now()
-    };
-
-    return new Response(JSON.stringify(stats), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    const stats = { totalUsers, activeShards: activeShards.length, scaleConfig: this.scaleConfigName, recentBroadcasts, timestamp: Date.now() };
+    return new Response(JSON.stringify(stats), { headers: { 'Content-Type': 'application/json' } });
   }
 
   private async getRecentBroadcasts(limit: number) {
     const broadcasts = await this.broadcasts.getAll();
-    
-    // Sort by timestamp and limit
     return broadcasts
-      .sort((a, b) => b.timestamp - a.timestamp)
+      .sort((a: any, b: any) => b.timestamp - a.timestamp)
       .slice(0, limit)
-      .map(broadcast => ({
+      .map((broadcast: any) => ({
         broadcastId: broadcast.id,
         status: broadcast.status,
         delivered: broadcast.delivered,
@@ -717,7 +541,7 @@ export class BroadcastServiceDO extends DurableObject {
   }
 
   // =============================================
-  // VIII. UTILITY METHODS
+  // UTILITY METHODS
   // =============================================
   private getShardForUser(userId: string): string {
     const hash = this.consistentHash(userId, this.scaleConfig.SHARD_COUNT);
@@ -735,7 +559,7 @@ export class BroadcastServiceDO extends DurableObject {
 
   private async getAllShards(): Promise<string[]> {
     const shards = await this.userShards.getAll();
-    return shards.map(shard => shard.shardName);
+    return shards.map((shard: any) => shard.shardName);
   }
 
   private async getTotalUsers(): Promise<number> {
@@ -746,11 +570,7 @@ export class BroadcastServiceDO extends DurableObject {
   private async markBroadcastFailed(broadcastId: string, error: any) {
     const data = await this.broadcasts.findById(broadcastId);
     if (data) {
-      await this.broadcasts.update(broadcastId, {
-        ...data,
-        status: 'failed',
-        error: error.message
-      });
+      await this.broadcasts.update(broadcastId, { ...data, status: 'failed', error: error.message });
     }
   }
 }

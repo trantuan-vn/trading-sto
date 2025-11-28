@@ -1,0 +1,399 @@
+1. Ví dụ cơ bản với User Schema
+
+typescript
+import { z } from 'zod';
+import { UserDODatabase } from './database.js';
+
+// Định nghĩa schema
+const userSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  age: z.number().min(0).optional(),
+  isActive: z.boolean().default(true),
+  profile: z.object({
+    avatar: z.string().url().optional(),
+    bio: z.string().max(500).optional()
+  }),
+  tags: z.array(z.string()).default([])
+});
+
+// Khởi tạo database
+const storage = getDurableObjectStorage(); // Giả sử có method này
+const db = new UserDODatabase(storage, 'user-123', (event, data) => {
+  console.log('Broadcast:', event, data);
+});
+
+// Thiết lập organization context
+db.setOrganizationContext('org-456');
+
+// Tạo table
+const userTable = db.table('users', userSchema, {
+  userScoped: true,
+  organizationScoped: true,
+  indexes: ['email', 'isActive', 'age']
+});
+
+// CRUD Operations
+async function userExamples() {
+  // CREATE
+  const newUser = await userTable.create({
+    name: 'John Doe',
+    email: 'john@example.com',
+    age: 30,
+    profile: {
+      avatar: 'https://example.com/avatar.jpg',
+      bio: 'Software developer'
+    },
+    tags: ['tech', 'javascript']
+  });
+  console.log('Created user:', newUser);
+
+  // FIND BY ID
+  const foundUser = await userTable.findById(newUser.id);
+  console.log('Found user:', foundUser);
+
+  // UPDATE
+  const updatedUser = await userTable.update(newUser.id, {
+    age: 31,
+    profile: {
+      ...newUser.profile,
+      bio: 'Senior software developer'
+    }
+  });
+  console.log('Updated user:', updatedUser);
+
+  // DELETE
+  await userTable.delete(newUser.id);
+  console.log('User deleted');
+
+  // GET ALL
+  const allUsers = await userTable.getAll();
+  console.log('All users:', allUsers);
+
+  // COUNT
+  const userCount = await userTable.count();
+  console.log('User count:', userCount);
+}
+2. Ví dụ Query phức tạp
+
+typescript
+async function queryExamples() {
+  // Tạo nhiều users để demo query
+  await userTable.create({ name: 'Alice', email: 'alice@example.com', age: 25, isActive: true });
+  await userTable.create({ name: 'Bob', email: 'bob@example.com', age: 35, isActive: false });
+  await userTable.create({ name: 'Charlie', email: 'charlie@example.com', age: 28, isActive: true });
+
+  // WHERE đơn giản
+  const activeUsers = await userTable
+    .where('isActive', '==', true)
+    .get();
+  console.log('Active users:', activeUsers);
+
+  // WHERE với nhiều điều kiện
+  const youngActiveUsers = await userTable
+    .where('isActive', '==', true)
+    .where('age', '<', 30)
+    .get();
+  console.log('Young active users:', youngActiveUsers);
+
+  // ORDER BY và LIMIT
+  const oldestUsers = await userTable
+    .where('isActive', '==', true)
+    .orderBy('age', 'desc')
+    .limit(2)
+    .get();
+  console.log('Oldest active users:', oldestUsers);
+
+  // IN operator
+  const specificAges = await userTable
+    .where('age', 'in', [25, 28, 35])
+    .get();
+  console.log('Specific ages:', specificAges);
+
+  // AND condition với callback
+  const complexQuery = await userTable
+    .and((q) => {
+      q.where('isActive', '==', true)
+       .where('age', '>=', 25);
+    })
+    .orderBy('name', 'asc')
+    .get();
+  console.log('Complex query results:', complexQuery);
+
+  // OR condition
+  const orQuery = await userTable
+    .or((q) => {
+      q.where('name', '==', 'Alice')
+       .where('name', '==', 'Bob');
+    })
+    .get();
+  console.log('OR query results:', orQuery);
+
+  // Kết hợp AND và OR
+  const advancedQuery = await userTable
+    .and((q) => {
+      q.where('isActive', '==', true)
+       .or((subQ) => {
+         subQ.where('age', '<', 30)
+             .where('age', '>', 20);
+       });
+    })
+    .get();
+  console.log('Advanced query:', advancedQuery);
+
+  // FIRST - lấy bản ghi đầu tiên
+  const firstUser = await userTable
+    .where('isActive', '==', true)
+    .orderBy('createdAt', 'asc')
+    .first();
+  console.log('First active user:', firstUser);
+
+  // COUNT với điều kiện
+  const activeCount = await userTable
+    .where('isActive', '==', true)
+    .count();
+  console.log('Active user count:', activeCount);
+}
+3. Ví dụ với Product Schema và Transaction
+
+typescript
+const productSchema = z.object({
+  name: z.string().min(1),
+  price: z.number().min(0),
+  category: z.string(),
+  stock: z.number().int().min(0),
+  metadata: z.object({
+    supplier: z.string(),
+    weight: z.number().optional()
+  }).optional()
+});
+
+const orderSchema = z.object({
+  productId: z.string(),
+  quantity: z.number().int().min(1),
+  totalPrice: z.number().min(0),
+  status: z.enum(['pending', 'confirmed', 'shipped', 'delivered'])
+});
+
+async function transactionExamples() {
+  const productTable = db.table('products', productSchema, {
+    userScoped: true,
+    organizationScoped: true,
+    indexes: ['category', 'price']
+  });
+
+  const orderTable = db.table('orders', orderSchema, {
+    userScoped: true,
+    organizationScoped: true,
+    indexes: ['status', 'productId']
+  });
+
+  // Tạo transaction - update stock và tạo order
+  const product = await productTable.create({
+    name: 'Laptop',
+    price: 999.99,
+    category: 'electronics',
+    stock: 10,
+    metadata: {
+      supplier: 'TechCorp',
+      weight: 2.5
+    }
+  });
+
+  try {
+    await db.execTransaction([
+      {
+        sql: `UPDATE "products" SET stock = stock - ? WHERE id = ? AND user_id = ? AND organization_id = ?`,
+        params: [1, product.id, 'user-123', 'org-456']
+      },
+      {
+        sql: `INSERT INTO "orders" (id, product_id, quantity, total_price, status, created_at, updated_at, user_id, organization_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        params: [
+          crypto.randomUUID(),
+          product.id,
+          1,
+          999.99,
+          'pending',
+          Date.now(),
+          Date.now(),
+          'user-123',
+          'org-456'
+        ]
+      }
+    ]);
+
+    console.log('Transaction completed successfully');
+  } catch (error) {
+    console.error('Transaction failed:', error);
+  }
+
+  // Query products với điều kiện phức tạp
+  const expensiveElectronics = await productTable
+    .where('category', '==', 'electronics')
+    .where('price', '>', 500)
+    .orderBy('price', 'desc')
+    .get();
+  console.log('Expensive electronics:', expensiveElectronics);
+
+  // Query orders với join (sử dụng raw SQL)
+  const orderDetails = await db.execSelectSQL(`
+    SELECT o.*, p.name as product_name, p.price as unit_price 
+    FROM "orders" o 
+    JOIN "products" p ON o.product_id = p.id 
+    WHERE o.user_id = ? AND o.organization_id = ?
+  `, ['user-123', 'org-456']);
+  console.log('Order details:', orderDetails);
+}
+4. Ví dụ Broadcast và Real-time Updates
+
+typescript
+async function broadcastExamples() {
+  // Broadcast sẽ được kích hoạt tự động qua GenericTable
+  const messageSchema = z.object({
+    content: z.string(),
+    roomId: z.string(),
+    type: z.enum(['text', 'image', 'file']).default('text')
+  });
+
+  const messageTable = db.table('messages', messageSchema, {
+    userScoped: true,
+    organizationScoped: false, // Messages có thể không cần organization
+    indexes: ['roomId', 'createdAt']
+  });
+
+  // Khi tạo message, broadcast sẽ tự động gửi event
+  const message = await messageTable.create({
+    content: 'Hello world!',
+    roomId: 'room-123',
+    type: 'text'
+  });
+  // Broadcast event: "table:messages" với { type: 'create', data: message }
+
+  // Khi update message
+  await messageTable.update(message.id, {
+    content: 'Hello updated world!'
+  });
+  // Broadcast event: "table:messages" với { type: 'update', data: updatedMessage }
+
+  // Khi delete message
+  await messageTable.delete(message.id);
+  // Broadcast event: "table:messages" với { type: 'delete', data: { id: message.id } }
+}
+5. Ví dụ Advanced Query Patterns
+
+typescript
+async function advancedQueryPatterns() {
+  const postSchema = z.object({
+    title: z.string(),
+    content: z.string(),
+    status: z.enum(['draft', 'published', 'archived']),
+    viewCount: z.number().int().min(0).default(0),
+    tags: z.array(z.string()),
+    publishedAt: z.number().optional() // timestamp
+  });
+
+  const postTable = db.table('posts', postSchema, {
+    userScoped: true,
+    organizationScoped: false,
+    indexes: ['status', 'publishedAt', 'viewCount']
+  });
+
+  // Phân trang
+  const page1 = await postTable
+    .where('status', '==', 'published')
+    .orderBy('publishedAt', 'desc')
+    .limit(10)
+    .offset(0)
+    .get();
+
+  const page2 = await postTable
+    .where('status', '==', 'published')
+    .orderBy('publishedAt', 'desc')
+    .limit(10)
+    .offset(10)
+    .get();
+
+  // Search với LIKE/includes
+  const searchResults = await postTable
+    .where('title', 'includes', 'javascript')
+    .or((q) => {
+      q.where('content', 'includes', 'javascript')
+       .where('tags', 'includes', 'javascript');
+    })
+    .get();
+
+  // Thống kê
+  const stats = {
+    total: await postTable.count(),
+    published: await postTable.where('status', '==', 'published').count(),
+    drafts: await postTable.where('status', '==', 'draft').count(),
+    popular: await postTable
+      .where('status', '==', 'published')
+      .where('viewCount', '>', 1000)
+      .count()
+  };
+
+  console.log('Post statistics:', stats);
+
+  // Update nhiều bản ghi cùng lúc
+  const popularPosts = await postTable
+    .where('viewCount', '>', 100)
+    .get();
+
+  for (const post of popularPosts) {
+    await postTable.update(post.id, {
+      viewCount: post.viewCount + 1
+    });
+  }
+}
+6. Ví dụ Error Handling và Validation
+
+typescript
+async function errorHandlingExamples() {
+  try {
+    // Validation error - schema không hợp lệ
+    await userTable.create({
+      name: 'J', // Too short - sẽ fail validation
+      email: 'invalid-email', // Invalid email
+      age: -5 // Negative age
+    });
+  } catch (error) {
+    console.error('Validation error:', error);
+  }
+
+  try {
+    // Update không tồn tại
+    await userTable.update('non-existent-id', {
+      name: 'Updated Name'
+    });
+  } catch (error) {
+    console.error('Update error:', error);
+  }
+
+  try {
+    // Transaction rollback
+    await db.execTransaction([
+      { sql: 'INVALID SQL' } // Sẽ fail và rollback
+    ]);
+  } catch (error) {
+    console.error('Transaction error:', error);
+  }
+
+  // Safe query với first()
+  const nonExistentUser = await userTable
+    .where('email', '==', 'nonexistent@example.com')
+    .first();
+  
+  if (!nonExistentUser) {
+    console.log('User not found - safe to handle');
+  }
+}
+Các ví dụ trên展示了 toàn bộ khả năng của hệ thống:
+
+CRUD operations cơ bản
+Complex queries với AND/OR conditions
+Transactions cho operations atomic
+Real-time updates qua broadcast
+Error handling và validation
+Pagination và sorting
+Advanced patterns cho các use case thực tế

@@ -1,264 +1,175 @@
 import { Hono } from 'hono';
-import { getCookie } from 'hono/cookie'  
+import { getCookie } from 'hono/cookie';  
 import { handleError, parseBody, getIPAndUserAgent, getSessionIdHash } from '../../shared/utils';
-
 import { requireAuth } from './authMiddleware';
 import { createApplicationService } from './application';
-import { OTPRequestSchema, OTPVerificationSchema, OAuthCallbackSchema, SIWEAuthSchema } from './domain';
-import { setCookieWithOption, clearAuthCookies, normalizeOAuthIdentifier } from './utils';
-import { AUTH_CONSTANTS } from './constant';
+import { 
+  OTPRequestSchema, 
+  OTPVerificationSchema, 
+  OAuthCallbackSchema, 
+  SIWEAuthSchema 
+} from './domain';
+import { cookieUtils, oauthUtils } from './utils';
+import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
 export function createAuthRoutes(bindingName: string) {
-  const routes = new Hono<{ Bindings: Env }>();
-  // I. OAUTH
-  routes.get('/oauth/:provider/url', async (c) => {
+  const app = new Hono<{ Bindings: Env }>();
 
-    try {
-      const provider = c.req.param('provider') as 'google' | 'apple' | 'facebook' | 'github' | 'twitter';
+  // Helper function để xử lý route chung
+  const createRouteHandler = (
+    handler: Function, 
+    errorMessage: string,
+    requireOriginCheck: boolean = false
+  ) => {
+    return async (c: any) => {
+      try {
+        if (requireOriginCheck) {
+          const origin = c.req.header('origin') || c.req.header('referer');
+          if (!origin?.startsWith(c.env.FRONTEND_URL)) {
+            throw new Error('Invalid origin');
+          }
+        }
 
-      if (!provider) {
-        throw new Error('Missing OAuth provider');
+        const request = c.req.raw;
+        const { ipAddress, userAgent } = getIPAndUserAgent(request);
+        if (!ipAddress || !userAgent) {
+          throw new Error('Missing IP address or user agent');
+        }
+        const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+
+        return await handler(c, sessionId, ipAddress, userAgent);
+      } catch (e) {
+        const { errorResponse, status } = await handleError(c, e, errorMessage);
+        cookieUtils.clearAuthCookies(c);
+        return c.json(errorResponse, status);
       }
-      
-      if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
-        throw new Error(`Unsupported OAuth provider: ${provider}`);
-      }
+    };
+  };
 
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
-
-      const applicationService = createApplicationService(c, bindingName);
-      const authUrl = await applicationService.getAuthUrlUseCase(provider, sessionId);
-
-      return c.json({ url: authUrl });
-
-    } catch (e) {
-      const { errorResponse, status } = await handleError(c, e, "Failed to get OAuth URL");
-      return c.json(errorResponse, status);
+  // I. OAUTH Routes
+  app.get('/oauth/:provider/url', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const provider = c.req.param('provider') as any;
+    
+    if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
+      throw new Error(`Unsupported OAuth provider: ${provider}`);
     }
-  });
 
-  routes.get('/oauth/:provider/callback', async (c) => {
+    const applicationService = createApplicationService(c, bindingName);
+    const authUrl = await applicationService.getAuthUrlUseCase(provider, sessionId);
 
-    try {
-      // Origin check
-      const origin = c.req.header('origin') || c.req.header('referer');
-      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
-        throw new Error('Invalid origin');
-      }
+    return c.json({ url: authUrl });
+  }, "Failed to get OAuth URL"));
 
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
-
-      const provider = c.req.param('provider') as 'google' | 'apple' | 'facebook' | 'github' | 'twitter';
-      // Validate provider
-      if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
-        throw new Error(`Unsupported OAuth provider: ${provider}`);
-      }
-      
-      // Check for OAuth errors
-      const error = c.req.query('error');
-      if (error) {
-        throw new Error(`OAuth error: ${error}`);
-      }
-
-      const { code, state } = OAuthCallbackSchema.parse(c.req.query());
-
-      // Validate code
-      if (!code) {
-        throw new Error('Missing OAuth code');
-      }
-
-      // Validate state
-      if (!state) {
-        throw new Error('Missing OAuth state');
-      }
-
-      const applicationService = createApplicationService(c, bindingName);
-
-      // Exchange code for tokens
-      const validatedUserInfo = await applicationService.exchangeOAuthCodeUseCase(provider, sessionId, state, code);
-            
-      // Normalize identifier based on provider
-      const identifier = normalizeOAuthIdentifier(provider, validatedUserInfo);
-      
-      const { token, refreshToken } = await applicationService.connectOAuthUseCase(sessionId, identifier, ipAddress, userAgent);
-
-      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
-      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
-
-      const redirectUrl = `${c.env.FRONTEND_URL}`;
-
-      return c.redirect(redirectUrl);
-
-    } catch (e) {
-      const { errorResponse, status } = await handleError(c, e, "OAuth callback failed");
-      clearAuthCookies(c);
-      return c.json(errorResponse, status);
+  app.get('/oauth/:provider/callback', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const provider = c.req.param('provider') as any;
+    
+    if (!['google', 'apple', 'facebook', 'github', 'twitter'].includes(provider)) {
+      throw new Error(`Unsupported OAuth provider: ${provider}`);
     }
-  });  
-  
-  // II. OTP
-  routes.post('/otp/request', async (c) => {
-    try {
-      const { identifier } = await parseBody(c, OTPRequestSchema);
-      if (!identifier) {
-        throw new Error('Missing identifier');
-      }
 
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
-
-      const applicationService = createApplicationService(c, bindingName);
-      await applicationService.getRequestOtpUseCase(identifier, sessionId);
-
-      return c.json({ ok: true });
+    // Check for OAuth errors
+    const error = c.req.query('error');
+    if (error) {
+      throw new Error(`OAuth error: ${error}`);
     }
-    catch (e) {
-      const { errorResponse, status } = await handleError(c, e, "OTP request failed");
-      return c.json(errorResponse, status);
+    
+    const queryParams = c.req.query();
+    if (!queryParams.code || !queryParams.state) {
+      throw new Error('Missing OAuth code or state');
     }
-  });
-  
-  routes.post('/otp/verify', async (c) => {
-    try {
-      // Origin check
-      const origin = c.req.header('origin') || c.req.header('referer');
-      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
-        throw new Error('Invalid origin');
-      }
+    const { code, state } = OAuthCallbackSchema.parse(c.req.query());
 
-      const { identifier, otp } = await parseBody(c, OTPVerificationSchema);
-      if (!identifier || !otp) {
-        throw new Error('Missing identifier or OTP');
-      }
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+    if (!code || !state) {
+      throw new Error('Missing OAuth code or state');
+    }    
 
-      const applicationService = createApplicationService(c, bindingName);
+    const applicationService = createApplicationService(c, bindingName);
 
-      const { token, refreshToken } = await applicationService.verifyOtpUseCase(identifier, sessionId, otp, ipAddress, userAgent);
+    // Exchange code for tokens and connect user
+    const validatedUserInfo = await applicationService.exchangeOAuthCodeUseCase(provider, sessionId, state, code);
+    const identifier = oauthUtils.normalizeOAuthIdentifier(provider, validatedUserInfo);
+    
+    const { token, refreshToken } = await applicationService.connectOAuthUseCase(
+      sessionId, identifier, ipAddress, userAgent
+    );
 
-      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
-      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+    cookieUtils.setAuthCookies(c, token, refreshToken);
+    return c.redirect(c.env.FRONTEND_URL);
+  }, "OAuth callback failed", true));
 
-      return c.json({ ok: true });
-    }
-    catch (e) {
-      const { errorResponse, status } = await handleError(c, e, "OTP verification failed");
-      clearAuthCookies(c);
-      return c.json(errorResponse, status);
-    }
-  });
-  
-  // III. Wallet
-  routes.get('/wallet/nonce', async (c) => {
-    try {
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
-      const applicationService = createApplicationService(c, bindingName);
-      const nonce= await applicationService.generateNonceUseCase(sessionId);
+  // II. OTP Routes
+  app.post('/otp/request', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const { identifier } = await parseBody(c, OTPRequestSchema);
+    
+    const applicationService = createApplicationService(c, bindingName);
+    await applicationService.getRequestOtpUseCase(identifier, sessionId);
 
-      return c.json({ nonce: nonce });
-    } catch (e) {
-      const { errorResponse, status } = await handleError(c, e, "Nonce request failed");
-      return c.json(errorResponse, status);
-    }
-  });
+    return c.json({ ok: true });
+  }, "OTP request failed"));
 
-  routes.post('/wallet/connect', async (c) => {
-    try {
-      // Origin check
-      const origin = c.req.header('origin') || c.req.header('referer');
+  app.post('/otp/verify', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const { identifier, otp } = await parseBody(c, OTPVerificationSchema);
+    
+    const applicationService = createApplicationService(c, bindingName);
+    const { token, refreshToken } = await applicationService.verifyOtpUseCase(
+      identifier, sessionId, otp, ipAddress, userAgent
+    );
 
-      if (!origin || !origin.startsWith(c.env.FRONTEND_URL)) {
-        throw new Error('Invalid origin');
-      }
+    cookieUtils.setAuthCookies(c, token, refreshToken);
+    return c.json({ ok: true });
+  }, "OTP verification failed", true));
 
-      const { message, signature } = await parseBody(c, SIWEAuthSchema);
-      if (!message || !signature) {
-        throw new Error('Missing message or signature');
-      }
+  // III. Wallet Routes
+  app.get('/wallet/nonce', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const applicationService = createApplicationService(c, bindingName);
+    const nonce = await applicationService.generateNonceUseCase(sessionId);
 
-      const request = c.req.raw;
-      const { ipAddress, userAgent } = getIPAndUserAgent(request);
-      if (!ipAddress || !userAgent) {
-        throw new Error('Missing IP address or user agent');
-      }
-      const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+    return c.json({ nonce });
+  }, "Nonce request failed"));
 
-      const applicationService = createApplicationService(c, bindingName);
-      const fields = await applicationService.verifySignatureUseCase(sessionId, message, signature);
+  app.post('/wallet/connect', createRouteHandler(async (c: any, sessionId: string, ipAddress: string, userAgent: string) => {
+    const { message, signature } = await parseBody(c, SIWEAuthSchema);
+    
+    const applicationService = createApplicationService(c, bindingName);
+    const fields = await applicationService.verifySignatureUseCase(sessionId, message, signature);
+    const address = fields.address.toLowerCase();
 
-      // Tạo/cập nhật user
-      const address = fields.address.toLowerCase();
+    const { token, refreshToken } = await applicationService.connectWalletUseCase(
+      sessionId, address, ipAddress, userAgent
+    );
 
-      const { token, refreshToken } = await applicationService.connectWalletUseCase(sessionId, address, ipAddress, userAgent);
+    cookieUtils.setAuthCookies(c, token, refreshToken);
+    return c.json({ ok: true });
+  }, "Wallet connection failed", true));
 
-      setCookieWithOption(c, "sessionId", token, AUTH_CONSTANTS.SESSION_EXPIRY);
-      setCookieWithOption(c, "token", token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-      setCookieWithOption(c, "refreshToken", refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);      
-
-      return c.json({ ok: true });
-      
-    } catch (e) {
-      const { errorResponse, status } = await handleError(c,e, "Wallet connection failed");
-      clearAuthCookies(c);
-      return c.json(errorResponse, status);
-    }
-  });
-  
-  // IV. Profile
-  routes.post('/profile/logout', async (c) => {
+  // IV. Profile Routes
+  app.post('/profile/logout', async (c) => {
     try {
       const sessionId = getCookie(c, 'sessionId');
-      if (!sessionId) {
-        throw new Error('Session not found');
-      }
+      if (!sessionId) throw new Error('Session not found');
+      
       const user = requireAuth(c);
       const applicationService = createApplicationService(c, bindingName);
       await applicationService.logoutUseCase(user.identifier, sessionId);
-      clearAuthCookies(c);
       
+      cookieUtils.clearAuthCookies(c);
       return c.json({ ok: true });
     } catch (e) {
       const { errorResponse } = await handleError(c, e, "Logout failed");
       return c.json(errorResponse, 401);
     }
   });
-  
-  routes.post('/profile/logoutAll', async (c) => {
+
+  app.post('/profile/logoutAll', async (c) => {
     try {
       const sessionId = getCookie(c, 'sessionId');
-      if (!sessionId) {
-        throw new Error('Session not found');
-      }
+      if (!sessionId) throw new Error('Session not found');
+      
       const user = requireAuth(c);
       const applicationService = createApplicationService(c, bindingName);
-      await applicationService.logoutAllUseCase(user.identifier, sessionId);
-      clearAuthCookies(c);
+      await applicationService.logoutAllUseCase(user.identifier);
+      
+      cookieUtils.clearAuthCookies(c);
       return c.json({ ok: true });
     } catch (e) {
       const { errorResponse } = await handleError(c, e, "Logout failed");
@@ -266,18 +177,19 @@ export function createAuthRoutes(bindingName: string) {
     }
   });
 
-  routes.get('/profile/me', async (c) => {
+  app.get('/profile/me', async (c) => {
     try {
       const user = requireAuth(c);
-      if (!user) {
-        throw new Error('User not found');
-      }
-      return c.json({ id: user.id, identifier: user.identifier, address: user.address }, 200);
-    } catch (e: any) {
-      const { errorResponse } = await handleError(c,e, "Get user info failed");
+      return c.json({ 
+        id: user.id, 
+        identifier: user.identifier, 
+        address: user.address 
+      });
+    } catch (e) {
+      const { errorResponse } = await handleError(c, e, "Get user info failed");
       return c.json(errorResponse, 401);
     }
-  });  
+  });
 
-  return routes;
+  return app;
 }

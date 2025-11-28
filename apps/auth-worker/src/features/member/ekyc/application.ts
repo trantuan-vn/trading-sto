@@ -14,75 +14,53 @@ import {
   DocumentExtractionResult,
   FaceDetectionResult,
   FaceVerificationResult,
-  LivenessResult
+  LivenessResult,
+  IAIDocumentService
 } from './domain';
 
 interface IAIDocumentApplicationService {
-  // Document Recognition
   recognizeDocumentUseCase(identifier: string, request: any): Promise<DocumentExtractionResult>;
-  
-  // Face Detection
   faceSearchUseCase(identifier: string, request: any): Promise<FaceDetectionResult>;
-  
-  // Face Verification
   faceVerifyUseCase(identifier: string, request: any): Promise<FaceVerificationResult>;
-  
-  // Liveness Detection
   livenessDetectionUseCase(identifier: string, request: any): Promise<LivenessResult>;
 }
 
 export function createDocumentAIService(c: Context, bindingName: string): IAIDocumentApplicationService {
+  
+  const createUseCase = <T>(
+    schema: any,
+    resultSchema: any,
+    method: keyof IAIDocumentService
+  ) => {
+    return async (identifier: string, request: any): Promise<T> => {
+      const validatedRequest = schema.parse(request);
+      const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
+      const aiService = createAIService(c.env, userDO);
+      const result = await aiService[method](validatedRequest);
+      return resultSchema.parse(result);
+    };
+  };
+
   return {
-    async recognizeDocumentUseCase(identifier: string, request: any): Promise<DocumentExtractionResult> {
-      // Validate request with Zod schema
-      const validatedRequest = DocumentRecognitionSchema.parse(request);
-      
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO);
-      
-      const result = await aiService.recognizeDocument(validatedRequest);
-      
-      // Validate result with Zod schema
-      return DocumentExtractionResultSchema.parse(result);
-    },
-
-    async faceSearchUseCase(identifier: string, request: any): Promise<FaceDetectionResult> {
-      // Validate request with Zod schema
-      const validatedRequest = FaceSearchSchema.parse(request);
-      
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO);
-      
-      const result = await aiService.faceSearch(validatedRequest);
-      
-      // Validate result with Zod schema
-      return FaceDetectionResultSchema.parse(result);
-    },
-
-    async faceVerifyUseCase(identifier: string, request: any): Promise<FaceVerificationResult> {
-      // Validate request with Zod schema
-      const validatedRequest = FaceVerificationSchema.parse(request);
-      
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO);
-      
-      const result = await aiService.faceVerify(validatedRequest);
-      
-      // Validate result with Zod schema
-      return FaceVerificationResultSchema.parse(result);
-    },
-
-    async livenessDetectionUseCase(identifier: string, request: any): Promise<LivenessResult> {
-      // Validate request with Zod schema
-      const validatedRequest = LivenessDetectionSchema.parse(request);
-      
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const aiService = createAIService(userDO);
-      
-      const result = await aiService.livenessDetection(validatedRequest);
-      
-      // Validate result with Zod schema
-      return LivenessResultSchema.parse(result);
-    }
+    recognizeDocumentUseCase: createUseCase(
+      DocumentRecognitionSchema,
+      DocumentExtractionResultSchema,
+      'recognizeDocument'
+    ),
+    faceSearchUseCase: createUseCase(
+      FaceSearchSchema,
+      FaceDetectionResultSchema,
+      'faceSearch'
+    ),
+    faceVerifyUseCase: createUseCase(
+      FaceVerificationSchema,
+      FaceVerificationResultSchema,
+      'faceVerify'
+    ),
+    livenessDetectionUseCase: createUseCase(
+      LivenessDetectionSchema,
+      LivenessResultSchema,
+      'livenessDetection'
+    )
   };
 }

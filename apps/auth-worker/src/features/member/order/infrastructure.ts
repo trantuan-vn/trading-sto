@@ -6,132 +6,125 @@ import {
   UpdateOrderStatus,
   CalculateOrderRequest,
   IOrderInfrastructureService,
-  OrderSchema,
-  OrderItemSchema,
-  OrderItemDiscountSchema
 } from './domain';
 
-import { ServiceSchema } from '../../admin/service/domain';
+export function createOrderInfrastructureService(userDO: DurableObjectStub<UserDO>, context: any, bindingName: string): IOrderInfrastructureService {
+  
+  const executeRepositoryAction = async (operation: string, data: any, table: string): Promise<any> => {
+    const response = await userDO.fetch('http://user.internal/repository/action', {
+      method: 'POST',
+      body: JSON.stringify({ table, operation, data })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
+    }
+    
+    return await response.json();
+  };
 
-export function createOrderInfrastructureService(userDO: UserDO, context: any, bindingName: string): IOrderInfrastructureService {
+  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
+    const response = await userDO.fetch('http://user.internal/repository/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, params })
+    });
 
-    const orders = userDO.table('orders', OrderSchema, { userScoped: true });
-    const orderItems = userDO.table('order_items', OrderItemSchema, { userScoped: true });
-    const orderDiscounts = userDO.table('order_discounts', OrderItemDiscountSchema, { userScoped: true });
+    if (!response.ok) {
+      throw new Error(`Failed to execute query: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  };
 
-    const services = userDO.table('services', ServiceSchema, { userScoped: true });
+  // Helper methods
+  const calculateOrderTotal = async (user: any, request: CalculateOrderRequest): Promise<any[]> => {
+    const priceApp = createPriceApplicationService(context, bindingName);
+    const voucherApp = createVoucherApplicationService(context, bindingName);
+    const orderAmount = request.items.reduce((acc, item) => acc + item.basePrice * item.quantity, 0);
+    
+    const results = await Promise.all(
+      request.items.map(async (item) => {
+        const service = await executeRepositorySelect(
+          'select * from services where id = ? and is_active = ? and expires_at >= ?',
+          [item.serviceId, 'true', new Date().toISOString()]
+        ).then(rows => rows[0]);
 
-    // Helper method duy nhất cho tính toán order
-    async function calculateOrderTotal(userId: string, userRole: string, request: CalculateOrderRequest, priceApp: any, voucherApp: any): Promise<any[]> {
-      const results = [];
-      const orderAmount = request.items.reduce((acc, item) => acc + item.basePrice * item.quantity, 0);      
-      
-      for (const item of request.items) {
-        const service = await services
-          .where('id','==', item.serviceId)
-          .where('isActive', '==', 'true')
-          .where('expiresAt', '>=', new Date().toISOString())
-          .first();
-        
         if (!service) {
           throw new Error('Service not found');
         }
 
-        const servicePriceResult = await priceApp.calculateServicePrice('system', {
-          serviceId: service.id,
-          basePrice: item.basePrice,
-          quantity: item.quantity,
-          currency: request.currency,
-          maxCalls: service.maxCalls,
-          currentCalls: service.currentCalls,
-          serviceName: service.name
-        });
+        // Chuẩn bị các promise cho price calculation (luôn thực hiện)
+        const pricePromises = [
+          priceApp.calculateServicePrice(user.identifier, {
+            serviceId: service.id,
+            basePrice: item.basePrice,
+            quantity: item.quantity,
+            currency: request.currency,
+            maxCalls: service.max_calls,
+            currentCalls: service.current_calls,
+            serviceName: service.name
+          }),
+          priceApp.calculateUserPrice(user.identifier, {
+            serviceId: service.id, 
+            basePrice: item.basePrice,
+            quantity: item.quantity,
+            currency: request.currency,
+            userId: user.id,
+            userRole: user.role
+          })
+        ];
 
-        const userPriceResult = await priceApp.calculateUserPrice('system', {
-          basePrice: item.basePrice,
-          quantity: item.quantity,
-          currency: request.currency,
-          userId: userId,
-          userRole: userRole
-        });
-
-        const serviceVoucherResult = await voucherApp.applyServiceVoucher('system', {
-          voucherCode: request.voucherCode,
-          basePrice: item.basePrice,
-          orderAmount: orderAmount,
-          serviceId: service.id,
-          currentCalls: service.currentCalls,
-          userId: userId,
-          userRole: userRole
-        });
-
-        const userVoucherResult = await voucherApp.applyUserVoucher('system', {
-          voucherCode: request.voucherCode,
-          basePrice: item.basePrice,
-          orderAmount: orderAmount,
-          serviceId: service.id,
-          currentCalls: service.currentCalls,
-          userId: userId,
-          userRole: userRole
-        });
-
-        // Tạo object chứa các discount lớn hơn 0
-        const discounts: {
-          servicePriceDiscount?: {
-            amount: number;
-            type: string;
-            appliedPolicies: any[];
-          };
-          userPriceDiscount?: {
-            amount: number;
-            type: string;
-            appliedPolicies: any[];
-          };
-          serviceVoucherDiscount?: {
-            amount: number;
-            type: string;
-            voucher: any;
-          };
-          userVoucherDiscount?: {
-            amount: number;
-            type: string;
-            voucher: any;
-          };
-        } = {};
+        // Chuẩn bị các promise cho voucher calculation (chỉ khi có voucherCode)
+        const voucherPromises = [];
         
-        if (servicePriceResult.totalDiscount > 0) {
-          discounts.servicePriceDiscount = {
-            amount: servicePriceResult.totalDiscount,
-            type: 'service_price',
-            appliedPolicies: servicePriceResult.appliedPolicies
-          };
-        }
-        
-        if (userPriceResult.totalDiscount > 0) {
-          discounts.userPriceDiscount = {
-            amount: userPriceResult.totalDiscount,
-            type: 'user_price',
-            appliedPolicies: userPriceResult.appliedPolicies
-          };
-        }
-        
-        if (serviceVoucherResult.discountAmount > 0) {
-          discounts.serviceVoucherDiscount = {
-            amount: serviceVoucherResult.discountAmount,
-            type: 'service_voucher',
-            voucher: serviceVoucherResult.voucher
-          };
-        }
-        
-        if (userVoucherResult.discountAmount > 0) {
-          discounts.userVoucherDiscount = {
-            amount: userVoucherResult.discountAmount,
-            type: 'user_voucher',
-            voucher: userVoucherResult.voucher
-          };
+        if (request.voucherCode) {
+          voucherPromises.push(
+            voucherApp.applyServiceVoucher(user.identifier, {            
+              voucherCode: request.voucherCode,
+              basePrice: item.basePrice,
+              orderAmount: orderAmount,
+              serviceId: service.id,
+              currentCalls: service.current_calls,
+              userId: user.id,
+              userRole: user.role
+            }),
+            voucherApp.applyUserVoucher(user.identifier, {
+              voucherCode: request.voucherCode,
+              basePrice: item.basePrice,
+              orderAmount: orderAmount,
+              serviceId: service.id,
+              currentCalls: service.current_calls,
+              userId: user.id,
+              userRole: user.role
+            })
+          );
+        } else {
+          // Nếu không có voucher, trả về kết quả mặc định
+          voucherPromises.push(
+            Promise.resolve({
+              finalAmount: item.basePrice * item.quantity,
+              discountAmount: 0,
+              voucher: null
+            }),
+            Promise.resolve({
+              finalAmount: item.basePrice * item.quantity,
+              discountAmount: 0,
+              voucher: null
+            })
+          );
         }
 
-        results.push({
+        // Thực thi tất cả promises
+        const [servicePriceResult, userPriceResult, serviceVoucherResult, userVoucherResult] = await Promise.all([
+          ...pricePromises,
+          ...voucherPromises
+        ]);
+
+        const discounts = createDiscountsObject(servicePriceResult, userPriceResult, serviceVoucherResult, userVoucherResult);
+
+        return {
           serviceId: item.serviceId,
           basePrice: item.basePrice,
           quantity: item.quantity,
@@ -152,191 +145,236 @@ export function createOrderInfrastructureService(userDO: UserDO, context: any, b
             discountAmount: userVoucherResult.discountAmount
           },
           discounts: Object.keys(discounts).length > 0 ? discounts : undefined
-        });
-      }      
-
-      return results;
-    }
-
-    function generateOrderCode(): string {
-      const timestamp = new Date().getTime().toString().slice(-6);
-      const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-      return `ORDER_${timestamp}${random}`;
-    }
-
-    return {
-      async createOrder(userId: string, userRole: string, request: CreateOrder): Promise<any> {
-        // 1. Tính toán giá với Price Service và Voucher Service
-        const priceApp = createPriceApplicationService(context, bindingName);
-        const voucherApp = createVoucherApplicationService(context, bindingName);
-
-        const calculationResult = await calculateOrderTotal(userId, userRole, request, priceApp, voucherApp);
-
-        // 2. Tạo order record
-        const subtotalAmount = calculationResult.reduce((total: number, item: any) => {
-          return total + item.basePrice * item.quantity;
-        }, 0);
-        const discountAmount = calculationResult.reduce((total: number, item: any) => {
-          return total + (item.servicePrice.discountAmount + item.userPrice.discountAmount 
-                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount);
-        }, 0);  
-        const finalAmount = calculationResult.reduce((total: number, item: any) => {
-          return total + (item.basePrice - (item.servicePrice.discountAmount + item.userPrice.discountAmount 
-                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount) ) * item.quantity;
-        }, 0);         
-
-        const orderData = OrderSchema.parse({
-          orderCode: generateOrderCode(),
-          subtotalAmount: subtotalAmount,
-          discountAmount: discountAmount, 
-          finalAmount: finalAmount,
-          // Thông tin áp dụng
-          currency: request.currency,
-          appliedVoucherCode: request.voucherCode,
-          status: 'PENDING',
-          notes: request.notes,
-        });
-
-        const orderRecord = await orders.create(orderData);
-
-        // 3. Tạo order items (chỉ có service)
-        for (const item of calculationResult) {
-          
-          const orderItem= await orderItems.create({
-            serviceId: item.serviceId,
-            basePrice: item.basePrice,
-            quantity: item.quantity,
-            finalAmount: item.basePrice - (item.servicePrice.discountAmount + item.userPrice.discountAmount 
-                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount),
-            discountAmount: (item.servicePrice.discountAmount + item.userPrice.discountAmount 
-                            + item.serviceVoucher.discountAmount + item.userVoucher.discountAmount),
-            orderId: orderRecord.id       
-          });
-          // 4. Ghi log discounts
-          if (item.servicePrice.discountAmount>0) {
-              await orderDiscounts.create(OrderItemDiscountSchema.parse({
-                orderItemId: orderItem.id,
-                discountType: item.discounts.servicePriceDiscount.type,
-                discountAmount: item.discounts.servicePriceDiscount.amount,
-                appliedPolicies: item.discounts.servicePriceDiscount.appliedPolicies
-              }));            
-          }
-
-          if (item.userPrice.discountAmount>0) {
-            await orderDiscounts.create(OrderItemDiscountSchema.parse({
-              orderItemId: orderItem.id,
-              discountType: item.discounts.userPriceDiscount.type,
-              discountAmount: item.discounts.userPriceDiscount.amount,
-              appliedPolicies: item.discounts.userPriceDiscount.appliedPolicies
-            }));            
-          }
-
-          if (item.serviceVoucher.discountAmount>0) {
-            await orderDiscounts.create(OrderItemDiscountSchema.parse({
-              orderItemId: orderItem.id,
-              discountType: item.discounts.serviceVoucherDiscount.type,
-              discountAmount: item.discounts.serviceVoucherDiscount.amount,
-              appliedVoucherCode: item.discounts.serviceVoucherDiscount.voucher
-            }));            
-          }
-
-          if (item.userVoucher.discountAmount>0) {
-            await orderDiscounts.create(OrderItemDiscountSchema.parse({
-              orderItemId: orderItem.id,
-              discountType: item.discounts.userVoucherDiscount.type,
-              discountAmount: item.discounts.userVoucherDiscount.amount,
-              appliedVoucherCode: item.discounts.userVoucherDiscount.voucher
-            }));            
-          }
-        }
-
-        return { 
-          id: orderRecord.id, 
-          items: calculationResult
         };
-      },
+      })
+    );
 
-      async getOrders(filters: any): Promise<any[]> {
-        let query = orders.where('1', '==', '1');
-        
-        if (filters.status) {
-          query = query.where('status', '==', filters.status);
-        }
+    return results;
+  };
+
+  const createDiscountsObject = (servicePrice: any, userPrice: any, serviceVoucher: any, userVoucher: any) => {
+    const discounts: any = {};
     
-        const result = await query
-          .orderBy('createdAt', 'desc')
-          .limit(filters.limit)
-          .offset((filters.page - 1) * filters.limit)
-          .get();
+    if (servicePrice.totalDiscount > 0) {
+      discounts.servicePriceDiscount = {
+        amount: servicePrice.totalDiscount,
+        type: 'service_price',
+        appliedPolicies: servicePrice.appliedPolicies
+      };
+    }
+    
+    if (userPrice.totalDiscount > 0) {
+      discounts.userPriceDiscount = {
+        amount: userPrice.totalDiscount,
+        type: 'user_price',
+        appliedPolicies: userPrice.appliedPolicies
+      };
+    }
+    
+    if (serviceVoucher.discountAmount > 0) {
+      discounts.serviceVoucherDiscount = {
+        amount: serviceVoucher.discountAmount,
+        type: 'service_voucher',
+        voucher: serviceVoucher.voucher
+      };
+    }
+    
+    if (userVoucher.discountAmount > 0) {
+      discounts.userVoucherDiscount = {
+        amount: userVoucher.discountAmount,
+        type: 'user_voucher',
+        voucher: userVoucher.voucher
+      };
+    }
 
-        // Lấy items cho mỗi order
-        const ordersWithItems = await Promise.all(
-          result.map(async (order) => {
-            const items = await orderItems.where('orderId', '==', order.id).get();
-            return { ...order, items };
-          })
-        );
+    return discounts;
+  };
 
-        return ordersWithItems;
-      },
+  const generateOrderCode = (): string => {
+    const timestamp = new Date().getTime().toString().slice(-6);
+    const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `ORDER_${timestamp}${random}`;
+  };
 
-      async getOrderDetail(orderId: string): Promise<any> {
-        const order = await orders.findById(orderId);
-        if (!order) {
-          throw new Error('Order not found');
+  const createOrderDiscounts = async (orderItemId: string, discounts: any): Promise<void> => {
+    const discountRecords = [];
+    
+    if (discounts?.servicePriceDiscount) {
+      discountRecords.push(
+        executeRepositoryAction('create', {
+          orderItemId,
+          discountType: discounts.servicePriceDiscount.type,
+          discountAmount: discounts.servicePriceDiscount.amount,
+          appliedPolicies: discounts.servicePriceDiscount.appliedPolicies
+        }, 'order_discounts')
+      );
+    }
+
+    if (discounts?.userPriceDiscount) {
+      discountRecords.push(
+        executeRepositoryAction('create', {
+          orderItemId,
+          discountType: discounts.userPriceDiscount.type,
+          discountAmount: discounts.userPriceDiscount.amount,
+          appliedPolicies: discounts.userPriceDiscount.appliedPolicies
+        }, 'order_discounts')
+      );
+    }
+
+    if (discounts?.serviceVoucherDiscount) {
+      discountRecords.push(
+        executeRepositoryAction('create', {
+          orderItemId,
+          discountType: discounts.serviceVoucherDiscount.type,
+          discountAmount: discounts.serviceVoucherDiscount.amount,
+          appliedVoucherCode: discounts.serviceVoucherDiscount.voucher
+        }, 'order_discounts')
+      );
+    }
+
+    if (discounts?.userVoucherDiscount) {
+      discountRecords.push(
+        executeRepositoryAction('create', {
+          orderItemId,
+          discountType: discounts.userVoucherDiscount.type,
+          discountAmount: discounts.userVoucherDiscount.amount,
+          appliedVoucherCode: discounts.userVoucherDiscount.voucher
+        }, 'order_discounts')
+      );
+    }
+
+    await Promise.all(discountRecords);
+  };
+
+  return {
+    async createOrder(user: any, request: CreateOrder): Promise<any> {
+      const calculationResult = await calculateOrderTotal(user, request);
+
+      const subtotalAmount = calculationResult.reduce((total, item) => total + item.basePrice * item.quantity, 0);
+      const discountAmount = calculationResult.reduce((total, item) => 
+        total + item.servicePrice.totalDiscount + item.userPrice.totalDiscount + 
+               item.serviceVoucher.discountAmount + item.userVoucher.discountAmount, 0);
+      const finalAmount = subtotalAmount - discountAmount;
+
+      const orderData = {
+        orderCode: generateOrderCode(),
+        subtotalAmount,
+        discountAmount,
+        finalAmount,
+        currency: request.currency,
+        appliedVoucherCode: request.voucherCode,
+        status: 'PENDING',
+        notes: request.notes,
+      };
+
+      const orderRecord = await executeRepositoryAction('create', orderData, 'orders');
+
+      // Tạo order items và discounts
+      for (const item of calculationResult) {
+        const orderItem = await executeRepositoryAction('create', {
+          serviceId: item.serviceId,
+          basePrice: item.basePrice,
+          quantity: item.quantity,
+          finalAmount: item.basePrice - (item.servicePrice.totalDiscount + item.userPrice.totalDiscount + 
+                     item.serviceVoucher.discountAmount + item.userVoucher.discountAmount),
+          discountAmount: item.servicePrice.totalDiscount + item.userPrice.totalDiscount + 
+                         item.serviceVoucher.discountAmount + item.userVoucher.discountAmount,
+          orderId: orderRecord.id
+        }, 'order_items');
+
+        if (item.discounts) {
+          await createOrderDiscounts(orderItem.id, item.discounts);
         }
-
-        const items = await orderItems.where('orderId', '==', orderId).get();
-        const discounts = await orderDiscounts.where('orderItemId', 'in', items.map((item: any) => item.id)).get();
-
-        return {
-          ...order,
-          items,
-          discounts,
-        };
-      },
-
-      async updateOrderStatus(orderId: string, request: UpdateOrderStatus): Promise<any> {
-        const order = await orders.findById(orderId);
-        if (!order) {
-          throw new Error('Order not found');
-        }
-
-        let updateData;
-
-        if (request.notes) {
-          updateData = {
-            status: request.status,
-            notes: request.notes
-          };
-        }
-        else {
-          updateData = {
-            status: request.status
-          };
-        }
-      
-        await orders.update(orderId, updateData);
-        return { ...order, ...updateData, id: orderId };
-      },
-
-      async cancelOrder(orderId: string): Promise<any> {
-        const order = await orders.findById(orderId);
-        if (!order) {
-          throw new Error('Order not found');
-        }
-
-        if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
-          throw new Error(`Cannot cancel order with status: ${order.status}`);
-        }
-
-        const updateData = {
-          status: 'CANCELLED' as "PENDING" | "CONFIRMED" | "PROCESSING" | "COMPLETED" | "CANCELLED"
-        };
-
-        await orders.update(orderId, updateData);
-        return { ...order , ...updateData, id: orderId };
       }
 
-    };
+      return { id: orderRecord.id, items: calculationResult };
+    },
+
+    async getOrders(filters: any): Promise<any[]> {
+      let sql = 'select * from orders where 1=1';
+      const params: any[] = [];
+
+      if (filters.status) {
+        sql += ' and status = ?';
+        params.push(filters.status);
+      }
+
+      sql += ' order by created_at desc limit ? offset ?';
+      params.push(filters.limit, (filters.page - 1) * filters.limit);
+
+      const orders = await executeRepositorySelect(sql, params);
+
+      const ordersWithItems = await Promise.all(
+        orders.map(async (order) => {
+          const items = await executeRepositorySelect(
+            'select * from order_items where order_id = ?',
+            [order.id]
+          );
+          return { ...order, items };
+        })
+      );
+
+      return ordersWithItems;
+    },
+
+    async getOrderDetail(orderId: string): Promise<any> {
+      const [order] = await executeRepositorySelect(
+        'select * from orders where id = ?',
+        [orderId]
+      );
+
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      const [items, discounts] = await Promise.all([
+        executeRepositorySelect('select * from order_items where order_id = ?', [orderId]),
+        executeRepositorySelect(
+          `select od.* from order_discounts od 
+           join order_items oi on od.order_item_id = oi.id 
+           where oi.order_id = ?`,
+          [orderId]
+        )
+      ]);
+
+      return { ...order, items, discounts };
+    },
+
+    async updateOrderStatus(orderId: string, request: UpdateOrderStatus): Promise<any> {
+      const [order] = await executeRepositorySelect(
+        'select * from orders where id = ?',
+        [orderId]
+      );
+
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      const updateData = request.notes 
+        ? { status: request.status, notes: request.notes }
+        : { status: request.status };
+
+      await executeRepositoryAction('update', { id: orderId, ...updateData }, 'orders');
+      return { ...order, ...updateData, id: orderId };
+    },
+
+    async cancelOrder(orderId: string): Promise<any> {
+      const [order] = await executeRepositorySelect(
+        'select * from orders where id = ?',
+        [orderId]
+      );
+
+      if (!order) {
+        throw new Error('Order not found');
+      }
+
+      if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
+        throw new Error(`Cannot cancel order with status: ${order.status}`);
+      }
+
+      const updateData = { status: 'CANCELLED' };
+      await executeRepositoryAction('update', { id: orderId, ...updateData }, 'orders');
+      return { ...order, ...updateData, id: orderId };
+    }
+  };
 }

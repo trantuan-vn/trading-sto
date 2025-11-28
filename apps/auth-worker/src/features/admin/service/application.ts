@@ -5,6 +5,7 @@ import { createServiceInfrastructureService } from './infrastructure';
 import {
   RegisterService,
   ServiceUsage,
+  Service,
 } from './domain';
 
 export interface IServiceApplicationService {
@@ -15,50 +16,30 @@ export interface IServiceApplicationService {
 }
 
 export function createServiceApplicationService(c: Context, bindingName: string): IServiceApplicationService {
+  const getServiceInfrastructure = (identifier: string) => {
+    const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
+    if (!userDO) throw new Error(`Durable Object not found for identifier: ${identifier}`);
+    return createServiceInfrastructureService(userDO);
+  };
+
   return {
     async registerService(identifier: string, request: RegisterService): Promise<any> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const serviceInfra = createServiceInfrastructureService(userDO);
-      const service = await serviceInfra.registerService(request);
-      return {
-        id: service.id,
-        name: service.name,
-        endpoints: service.endpoints,
-        maxCalls: service.maxCalls,
-        currentCalls: service.currentCalls,
-        expiresAt: service.expiresAt,
-        createdAt: service.createdAt,
-        updatedAt: service.updatedAt,
-        isActive: service.isActive,
-      };
+      const serviceInfra = getServiceInfrastructure(identifier);
+      return await serviceInfra.registerService(request);
     },
 
     async getUserServices(identifier: string): Promise<any[]> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const serviceInfra = createServiceInfrastructureService(userDO);
-      const services = await serviceInfra.getUserServices();
-      return services.map(service => ({
-        id: service.id,
-        name: service.name,
-        endpoints: service.endpoints,
-        maxCalls: service.maxCalls,
-        currentCalls: service.currentCalls,
-        expiresAt: service.expiresAt,
-        createdAt: service.createdAt,
-        updatedAt: service.updatedAt,
-        isActive: service.isActive,
-      }));
+      const serviceInfra = getServiceInfrastructure(identifier);
+      return await serviceInfra.getUserServices();
     },
 
     async cancelService(identifier: string, serviceId: string): Promise<void> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const serviceInfra = createServiceInfrastructureService(userDO);
+      const serviceInfra = getServiceInfrastructure(identifier);
       await serviceInfra.cancelService(serviceId);
     },
 
     async getServiceUsage(identifier: string, serviceId: string, days?: number): Promise<ServiceUsage[]> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const serviceInfra = createServiceInfrastructureService(userDO);
+      const serviceInfra = getServiceInfrastructure(identifier);
       return await serviceInfra.getServiceUsage(serviceId, days);
     },
   };

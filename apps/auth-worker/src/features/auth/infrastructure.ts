@@ -1,91 +1,245 @@
 import { UserDO } from '../ws/infrastructure/UserDO';
-import { handleError } from '../../shared/utils';
 import { SiweMessage, generateNonce } from 'siwe';
 
-import { User, UserSchema, IUserRepository, IOTPService, IWalletService, IOAuthService, IKvService,
-          OAuthTokenResponse, OAuthTokenResponseSchema,
-          GoogleUserInfoSchema, AppleUserInfoSchema, FacebookUserInfoSchema, GitHubUserInfoSchema, TwitterUserInfoSchema,
-          Session, SessionSchema } from './domain';
-import { AUTH_CONSTANTS } from './constant';
-import { getOAuthConfig, generateOTP } from './utils';
+import { 
+  UserSchema, 
+  IUserRepository, 
+  IOTPService, 
+  IWalletService, 
+  IOAuthService, 
+  IKvService,
+  OAuthTokenResponse,
+  OAuthTokenResponseSchema,
+  GoogleUserInfoSchema, 
+  AppleUserInfoSchema, 
+  FacebookUserInfoSchema, 
+  GitHubUserInfoSchema, 
+  TwitterUserInfoSchema,
+  Session, 
+  SessionSchema 
+} from './domain';
+import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
+import { oauthUtils, otpUtils } from './utils';
 
-export function createRepository(userDO: UserDO) {
-  const users = userDO.table('users', UserSchema, { userScoped: true });
-  const sessions = userDO.table('sessions', SessionSchema, { userScoped: true });
+// Base repository operations
+const executeRepositoryAction = async (userDO: DurableObjectStub<UserDO>, operation: string, data: any, table: string): Promise<any> => {
+  const response = await userDO.fetch('http://user.internal/repository/action', {
+    method: 'POST',
+    body: JSON.stringify({ table, operation, data })
+  });
+  
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
+  }
+  
+  return await response.json();
+};
 
-  const userRepository: IUserRepository = {
-    async get(): Promise<any> {
-      return await users.limit(1).first();
-    },
+// User Repository Implementation
+const createUserRepository = (userDO: DurableObjectStub<UserDO>): IUserRepository => ({
+  async get(): Promise<any> {
+    const user = await executeRepositoryAction(userDO, 'first', {}, 'users');
+    return user || null;
+  },
 
-    async save(user: User): Promise<any> {
-      const validUser = UserSchema.parse(user);
-      const existingUser = await users.limit(1).first();
-      if (existingUser) {
-        return await users.update(existingUser.id, validUser);
-      } else {
-        return await users.create(validUser);
-      }
-    },
+  async save(user: any): Promise<any> {
+    const validationResult = UserSchema.parse(user);
+    const existingUser = await this.get();
+    
+    const operation = existingUser ? 'update' : 'create';
+    const payload = existingUser 
+      ? { id: existingUser.id, ...validationResult }
+      : validationResult;
+    
+    return await executeRepositoryAction(userDO, operation, payload, 'users');
+  },
 
-    async delete(): Promise<void> {
-      const user = await users.limit(1).first();
-      if (user) {
-        await users.delete(user.id);
-      }
-    },
+  async delete(): Promise<void> {
+    const user = await this.get();
+    if (!user) return;
+
+    await executeRepositoryAction(userDO, 'delete', { id: user.id }, 'users');
+  },
+});
+
+// Session Repository Implementation
+const createSessionRepository = (userDO: DurableObjectStub<UserDO>) => ({
+  async create(sessionData: Session): Promise<void> {
+    const validSession = SessionSchema.parse(sessionData);
+    await executeRepositoryAction(userDO, 'create', validSession, 'sessions');
+  },
+
+  async findById(sessionId: string): Promise<any> {
+    const session = await executeRepositoryAction(userDO, 'findById', { id: sessionId }, 'sessions');
+    return session || null;
+  },
+
+  async update(sessionId: string, sessionData: Partial<Session>): Promise<void> {
+    await executeRepositoryAction(userDO, 'update', { id: sessionId, data: sessionData }, 'sessions');
+  },
+
+  async delete(sessionId: string): Promise<void> {
+    await executeRepositoryAction(userDO, 'delete', { id: sessionId }, 'sessions');
+  },
+
+  async deactivateAllUserSessions(identifier: string): Promise<void> {
+    const response = await userDO.fetch('http://user.internal/repository/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operations: [
+          {
+            sql: 'UPDATE sessions SET isActive = false WHERE user_id IN (SELECT id FROM users WHERE identifier = ?)',
+            params: [identifier]
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to deactivate sessions: ${response.statusText}`);
+    }
+  },
+});
+
+// Main Repository Factory
+export function createRepository(userDO: DurableObjectStub<UserDO>) {
+  return {
+    users: createUserRepository(userDO),
+    sessions: createSessionRepository(userDO),
+  };
+}
+
+// KV Service Implementation
+export function createKvService(env: Env): IKvService {
+  const saveNonceData = async (key: string, nonce: string): Promise<void> => {
+    const nonceData = { nonce };
+    await env.NONCE_KV.put(key, JSON.stringify(nonceData), {
+      expirationTtl: AUTH_CONSTANTS.NONCE_EXPIRY,
+    });
+  };
+
+  const validateNonceData = async (key: string, nonce: string): Promise<boolean> => {
+    // Lấy và xóa atomically nếu có thể
+    const nonceStr = await env.NONCE_KV.get(key);
+    if (!nonceStr) throw new Error(ERROR_MESSAGES.AUTH.INVALID_OTP);
+
+    const nonceData = JSON.parse(nonceStr);
+    const isValid = nonceData.nonce === nonce;
+
+    if (isValid) {
+      // Xóa nonce ngay lập tức để tránh reuse
+      await env.NONCE_KV.delete(key);
+    }
+
+    return isValid;
   };
 
   return {
-    users: userRepository,
-    sessions: {
-      async create(sessionData: Session): Promise<void> {
-        const validSession = SessionSchema.parse(sessionData);
-        await sessions.create(validSession);
-      },
+    async saveNonce(sessionId: string, nonce: string): Promise<void> {
+      await saveNonceData(`Nonce:${sessionId}`, nonce);
+    },
 
-      async findById(sessionId: string): Promise<Session | null> {
-        const session = await sessions.findById(sessionId);
-        return session ? SessionSchema.parse(session) : null;
-      },
-
-      async update(sessionId: string, sessionData: Partial<Session>): Promise<void> {
-        const existingSession = await sessions.findById(sessionId);
-        if (existingSession) {
-          const updatedSession = { ...existingSession, ...sessionData };
-          const validSession = SessionSchema.parse(updatedSession);
-          await sessions.update(sessionId, validSession);
-        }
-      },
-
-      async delete(sessionId: string): Promise<void> {
-        await sessions.delete(sessionId);
-      }, 
-      async deactivateAllUserSessions(userId: string): Promise<void> {
-        const userSessions = await sessions.where('userId', '==', userId).get();
-        
-        for (const session of userSessions) {
-          await sessions.update(session.id, { ...session, isActive: false });
-        }
-      },
-      async updateSession(sessionId: string, token: string, refreshToken: string): Promise<void> {
-        const session = await sessions.findById(sessionId);
-        if (session) {
-          await sessions.update(sessionId, { ...session, token, refreshToken, isActive: true, expiresAt: new Date(Date.now() + AUTH_CONSTANTS.SESSION_EXPIRY * 1000).toISOString() });
-        }
-      },    
-
+    async validateNonce(sessionId: string, nonce: string): Promise<boolean> {
+      return await validateNonceData(`Nonce:${sessionId}`, nonce);
     }
   };
 }
 
+// OTP Service Implementation
 export function createOTPService(env: Env): IOTPService {
   const kvService = createKvService(env);
+  
+  const sendEmail = async (email: string, otp: string): Promise<void> => {
+    const emailData = {
+      personalizations: [{ to: [{ email }], subject: "Your OTP Code" }],
+      from: { email: "noreply@unitoken.trade", name: "Unitoken Auth" },
+      content: [{
+        type: "text/html",
+        value: `
+          <h2>Your OTP Code</h2>
+          <p>Your one-time password is: <strong>${otp}</strong></p>
+          <p>This code will expire in 10 minutes.</p>
+        `
+      }],
+    };
+
+    const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.EMAIL_API_KEY}`,
+      },
+      body: JSON.stringify(emailData),
+    });
+
+    if (!response.ok) {
+      console.error("Failed to send email OTP:", await response.text());
+    }
+  };
+
+  const sendSMS = async (phone: string, otp: string, provider: string): Promise<void> => {
+    try {
+      let response: Response | null = null;
+
+      switch (provider.toUpperCase()) {
+        case "TWILIO": {
+          const smsData = new URLSearchParams({
+            To: phone,
+            From: env.SMS_FROM_NUMBER,
+            Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+          });
+
+          const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
+          response = await fetch(
+            `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,
+            {
+              method: "POST",
+              headers: {
+                "Authorization": `Basic ${auth}`,
+                "Content-Type": "application/x-www-form-urlencoded",
+              },
+              body: smsData.toString(),
+            }
+          );
+          break;
+        }
+        case "VONAGE": {
+          const smsData = new URLSearchParams({
+            from: env.SMS_FROM_NUMBER,
+            to: phone,
+            text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+          });
+
+          const auth = btoa(`${env.VONAGE_API_KEY}:${env.VONAGE_API_SECRET}`);
+          response = await fetch("https://rest.nexmo.com/sms/json", {
+            method: "POST",
+            headers: {
+              "Authorization": `Basic ${auth}`,
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: smsData.toString(),
+          });
+          break;
+        }
+        default:
+          throw new Error(`Unsupported provider: ${provider}`);
+      }
+
+      if (response && !response.ok) {
+        console.error(`Failed to send SMS OTP via ${provider}:`, await response.text());
+      }
+    } catch (error) {
+      console.error(`Error sending SMS OTP via ${provider}:`, error);
+    }
+  };
+
   return {
     async generateOTP(sessionId: string): Promise<string> {
-      const otp = generateOTP();
-      kvService.saveNonce(sessionId, otp);      
-      return otp;       
+      const otp = otpUtils.generateOTP();
+      await kvService.saveNonce(sessionId, otp);
+      return otp;
     },
 
     async verifyOTP(otp: string, sessionId: string): Promise<boolean> {
@@ -93,251 +247,215 @@ export function createOTPService(env: Env): IOTPService {
     },
 
     async sendEmailOTP(email: string, otp: string): Promise<void> {
-      const emailData = {
-        personalizations: [{ to: [{ email }], subject: "Your OTP Code" }],
-        from: { email: "noreply@unitoken.trade", name: "Unitoken Auth" },
-        content: [{
-          type: "text/html",
-          value: `
-            <h2>Your OTP Code</h2>
-            <p>Your one-time password is: <strong>${otp}</strong></p>
-            <p>This code will expire in 10 minutes.</p>
-          `
-        }],
-      };
-
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${env.EMAIL_API_KEY}`,
-        },
-        body: JSON.stringify(emailData),
-      });
-
-      if (!response.ok) {
-        console.error("Failed to send email OTP:", await response.text());
-      }
+      await sendEmail(email, otp);
     },
 
-    async sendSmsOTP(phone: string, otp: string, provider: string) {
-      try {
-        let response: Response | null = null;
-
-        switch (provider.toUpperCase()) {
-          case "TWILIO": {
-            const smsData = new URLSearchParams({
-              To: phone,
-              From: env.SMS_FROM_NUMBER,
-              Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-            });
-
-            const accountSid = env.TWILIO_ACCOUNT_SID;
-            const authToken = env.TWILIO_AUTH_TOKEN;
-
-            response = await fetch(
-              `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
-              {
-                method: "POST",
-                headers: {
-                  "Authorization": "Basic " + btoa(`${accountSid}:${authToken}`),
-                  "Content-Type": "application/x-www-form-urlencoded",
-                },
-                body: smsData.toString(),
-              }
-            );
-            break;
-          }
-          case "VONAGE": {
-            const smsData = new URLSearchParams({
-              from: env.SMS_FROM_NUMBER,
-              to: phone,
-              text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-            });
-
-            response = await fetch("https://rest.nexmo.com/sms/json", {
-              method: "POST",
-              headers: {
-                "Authorization": "Basic " + btoa(`${env.VONAGE_API_KEY}:${env.VONAGE_API_SECRET}`),
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: smsData.toString(),
-            });        
-            break;
-          }
-
-          default:
-            throw new Error(`Unsupported provider: ${provider}`);
-        }
-
-        if (response && !response.ok) {
-          console.error(`Failed to send SMS OTP via ${provider}:`, await response.text());
-        }
-      } catch (error) {
-        console.error(`Error sending SMS OTP via ${provider}:`, error);
-      }
-    }    
+    async sendSmsOTP(phone: string, otp: string, provider: string): Promise<void> {
+      await sendSMS(phone, otp, provider);
+    }
   };
 }
 
+// Wallet Service Implementation
 export function createWalletService(env: Env): IWalletService {
   const kvService = createKvService(env);
+  const validateSiweFields= async (
+    fields: SiweMessage, 
+    options: {
+      expectedDomain?: string;
+      expectedOrigin?: string;
+      maxMessageAge?: number; // Thay thế maxExpirationHours
+    }
+  ): Promise<void> => {
+    const {
+      expectedDomain,
+      expectedOrigin,
+      maxMessageAge = 5 * 60 * 1000, // 5 minutes default
+    } = options;
+
+    const now = new Date();
+
+    // 1. Validate domain (QUAN TRỌNG)
+    if (expectedDomain && fields.domain !== expectedDomain) {
+      throw new Error(`Invalid domain: expected ${expectedDomain}, got ${fields.domain}`);
+    }
+
+    // 2. Validate URI/origin
+    if (expectedOrigin && fields.uri !== expectedOrigin) {
+      throw new Error(`Invalid URI: expected ${expectedOrigin}, got ${fields.uri}`);
+    }
+
+    // 3. Validate statement exists
+    if (!fields.statement || typeof fields.statement !== 'string') {
+      throw new Error('Missing authentication statement');
+    }
+
+    // 4. Validate message age (thay thế expiration time)
+    const issuedAt = new Date(fields.issuedAt || 0);
+    const messageAge = now.getTime() - issuedAt.getTime();
+    
+    if (messageAge > maxMessageAge) {
+      throw new Error(`Message is too old: ${Math.round(messageAge / 1000)} seconds`);
+    }
+
+    // 5. Validate issuedAt is not in the future (allow small clock skew)
+    if (issuedAt > new Date(now.getTime() + 2 * 60 * 1000)) { // 2 minutes clock skew
+      throw new Error('Message issued in the future');
+    }
+
+    // 6. Validate version
+    if (fields.version !== '1') {
+      throw new Error(`Unsupported version: ${fields.version}`);
+    }
+
+    // 7. Validate chainId (optional)
+    if (fields.chainId !== 1) { // Chỉ cho phép Ethereum mainnet
+      throw new Error(`Unsupported chain: ${fields.chainId}`);
+    }
+
+    // 8. Validate address format
+    if (!fields.address || !fields.address.match(/^0x[a-fA-F0-9]{40}$/)) {
+      throw new Error('Invalid Ethereum address');
+    }
+  }
   
   return {
     async generateNonceAndStore(sessionId: string): Promise<string> {
       const nonce = generateNonce();
-      kvService.saveNonce(sessionId, nonce);      
-      return nonce; 
+      await kvService.saveNonce(sessionId, nonce);
+      return nonce;
     },
 
-    async verifySignature(sessionId: string, message: string, signature: string): Promise<SiweMessage> {
-      const siweMessage = new SiweMessage(message);
+    async verifySignature(
+      sessionId: string, 
+      message: string, 
+      signature: string,
+      expectedDomain: string = 'unitoken.trade',
+      expectedOrigin: string = 'https://unitoken.trade'
+    ): Promise<SiweMessage> {
+      // 1. Parse message
+      let siweMessage: SiweMessage;
+      siweMessage = new SiweMessage(message);
+
+      // 2. Validate signature format
       const sig = signature.startsWith('0x') ? signature : `0x${signature}`;
-      const { data: fields } = await siweMessage.verify({ signature: sig });
+      if (!sig.match(/^0x[a-fA-F0-9]{130}$/)) {
+        throw new Error('Invalid signature format');
+      }
+
+      // 3. Verify signature với nonce constraint
+      const verificationResult = await siweMessage.verify({ signature: sig });
+
+      if (!verificationResult.success) {
+        throw new Error(`Signature verification failed: ${verificationResult.error}`);
+      }
+      
+      const { data: fields } = verificationResult;
+
       const isValid= await kvService.validateNonce(sessionId, fields.nonce);
       if (!isValid) {
         throw new Error('Invalid nonce');
       }
+
+      // 4. Validate additional fields
+      await validateSiweFields(fields, {
+        expectedDomain,
+        expectedOrigin,
+        maxMessageAge: 10 * 60 * 1000, // 10 minutes max age
+      });
+
       return fields;
     }
   };
 }
 
+// OAuth Service Implementation
 export function createOAuthService(env: Env): IOAuthService {
   const kvService = createKvService(env);
+
+  const exchangeCodeForToken = async (code: string, config: any): Promise<OAuthTokenResponse> => {
+    const params = new URLSearchParams({
+      code,
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      redirect_uri: config.redirectUri,
+      grant_type: 'authorization_code',
+    });
+
+    const response = await fetch(config.tokenEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      body: params.toString(),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OAuth token exchange failed: ${errorText}`);
+    }
+
+    const tokenData = await response.json();
+    return OAuthTokenResponseSchema.parse(tokenData);
+  };
+
+  const fetchUserInfo = async (provider: string, accessToken: string, config: any): Promise<any> => {
+    const response = await fetch(config.userInfoEndpoint, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json',
+        'User-Agent': 'Unitoken-Auth',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to get user info from ${provider}: ${response.status} ${errorText}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      const text = await response.text();
+      throw new Error(`Unexpected response format from ${provider}: ${contentType}`);
+    }
+
+    const userInfo = await response.json();
+
+    const schemaMap: Record<string, any> = {
+      google: GoogleUserInfoSchema,
+      apple: AppleUserInfoSchema,
+      facebook: FacebookUserInfoSchema,
+      github: GitHubUserInfoSchema,
+      twitter: TwitterUserInfoSchema,
+    };
+
+    const schema = schemaMap[provider];
+    if (!schema) throw new Error(`Unsupported provider: ${provider}`);
+
+    return schema.parse(userInfo);
+  };
+
   return {
     async generateState(sessionId: string): Promise<string> {
       const state = generateNonce();
-      kvService.saveNonce(sessionId, state);
-      return state; 
+      await kvService.saveNonce(sessionId, state);
+      return state;
     },
 
     async exchangeOAuthCode(provider: string, sessionId: string, state: string, code: string): Promise<OAuthTokenResponse> {
       const isValidNonce = await kvService.validateNonce(sessionId, state);
       if (!isValidNonce) {
-        throw new Error('OAUTH: Invalid nonce');
+        throw new Error('Invalid OAuth state');
       }
 
-      const config = getOAuthConfig(provider, env);
-      const params = new URLSearchParams({
-        code,
-        client_id: config.clientId,
-        client_secret: config.clientSecret,
-        redirect_uri: config.redirectUri,
-        grant_type: 'authorization_code',
-      });
-
-      const response = await fetch(config.tokenEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'application/json',
-        },
-        body: params.toString(),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`OAuth token exchange failed: ${errorText}`);
-      }
-
-      const tokenData = await response.json();
-
-      return OAuthTokenResponseSchema.parse(tokenData); 
+      const config = oauthUtils.getOAuthConfig(provider, env);
+      return await exchangeCodeForToken(code, config);
     },
 
     async getUserInfoFromProvider(provider: string, accessToken: string): Promise<any> {
-        const config = getOAuthConfig(provider, env);
-        const response = await fetch(config.userInfoEndpoint, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'application/json',
-            'User-Agent': 'YourAppName',
-          },
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Failed to get user info from ${provider}: ${response.status} ${errorText}`);
-        }
-
-        const contentType = response.headers.get('content-type') || '';
-
-        if (!contentType.includes('application/json')) {
-          const text = await response.text();
-          throw new Error(`Unexpected response format from ${provider}: ${contentType}`);
-        }
-
-        const userInfo = await response.json();
-
-        let validatedUserInfo: any;
-        switch (provider) {
-          case 'google':
-            validatedUserInfo = GoogleUserInfoSchema.parse(userInfo);
-            break;
-          case 'apple':
-            validatedUserInfo = AppleUserInfoSchema.parse(userInfo);
-            break;
-          case 'facebook':
-            validatedUserInfo = FacebookUserInfoSchema.parse(userInfo);
-            break;
-          case 'github':
-            validatedUserInfo = GitHubUserInfoSchema.parse(userInfo);
-            break;
-          case 'twitter':
-            validatedUserInfo = TwitterUserInfoSchema.parse(userInfo);
-            break;
-          default:
-            throw new Error(`Unsupported provider: ${provider}`);
-        }
-
-        return validatedUserInfo;
+      const config = oauthUtils.getOAuthConfig(provider, env);
+      return await fetchUserInfo(provider, accessToken, config);
     }
-  };
-}
-
-export function createKvService(env: any): IKvService {
-  return {
-    async saveNonce(sessionId: string, nonce: string): Promise<void> {
-      const nonceData = {
-        nonce,
-        used: false
-      };
-
-      await env.NONCE_KV.put(
-        `Nonce:${sessionId}`,
-        JSON.stringify(nonceData),
-        {
-          expirationTtl: AUTH_CONSTANTS.NONCE_EXPIRY,
-        }
-      );
-    },
-
-    async validateNonce(sessionId: string, nonce: string): Promise<boolean> {
-      const nonceStr = await env.NONCE_KV.get(`Nonce:${sessionId}`);
-      
-      if (!nonceStr) {
-        throw new Error('Nonce not found');
-      }
-
-      const nonceData = JSON.parse(nonceStr);
-      
-      // Kiểm tra nonce đã được sử dụng chưa
-      if (nonceData.used) {
-        throw new Error('Nonce has been used');
-      }
-
-      // Đánh dấu nonce đã được sử dụng
-      nonceData.used = true;
-      await env.NONCE_KV.put(
-        `Nonce:${nonce}`,
-        JSON.stringify(nonceData),
-        {
-          expirationTtl: AUTH_CONSTANTS.NONCE_EXPIRY,
-        }
-      );
-
-      return nonceData.nonce === nonce;
-    }  
   };
 }

@@ -21,12 +21,14 @@ declare namespace Cloudflare {
         GITHUB_CLIENT_SECRET: string;
         TWITTER_CLIENT_ID: string;
         TWITTER_CLIENT_SECRET: string;
+        SIWE_DOMAIN: string;
         FRONTEND_URL: string;
         BASE_URL: string;        
 		BROADCAST_SERVICE_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/BroadcastServiceDO").BroadcastServiceDO>;
         USER_SHARD_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/UserShardDO").UserShardDO>;
         USER_DO: DurableObjectNamespace<import("./src/features/ws/infrastructure/UserDO").UserDO>;
 		ASSETS: Fetcher;
+        R2_VERSION_BUCKET: R2Bucket;
         NONCE_KV: KVNamespace;
         DEBUG: string;
         AI: Ai;

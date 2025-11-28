@@ -1,4 +1,3 @@
-// infrastructure/aiService.ts
 import { 
   DocumentRecognition, 
   FaceSearch, 
@@ -10,253 +9,261 @@ import {
   LivenessResult,
   IAIDocumentService
 } from './domain';
-import { ServiceSchema, ServiceUsageSchema } from '../../admin/service/domain';
-
-import { toBase64, safeJsonParse, calculateConfidence, getDocumentPrompt, 
+import { toBase64, safeJsonParse, calculateConfidence, 
   calculateFaceDetectionConfidence, calculateFaceVerificationConfidence } from './utils';
+import { getDocumentPrompt } from './domain';
+import { UserDO } from '../../ws/infrastructure/UserDO';
 
-import { UserDO } from '../../ws/infrastructure/UserDO';  
+export function createAIService(env: Env, userDO: DurableObjectStub<UserDO>): IAIDocumentService {
+  // Helper methods  
+  const executeServiceSelect = async (sql: string, params: any[] = []): Promise<any[]> => {
+    const response = await userDO.fetch('http://user.internal/repository/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, params })
+    });
 
-export function createAIService(userDO: UserDO): IAIDocumentService {
-  
-  const services = userDO.table('services', ServiceSchema, { userScoped: true });
-  const serviceUsages = userDO.table('service_usages', ServiceUsageSchema, { userScoped: true });
+    if (!response.ok) {
+      throw new Error(`Failed to execute query: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  };
 
-  // Helper function to validate service usage
-  async function validateEndpoint(endpoint: string) {
-    const service = await services.where('endpoint','==', endpoint).first();
-    if (!service ) {
+  const validateServiceUsage = async (endpoint: string): Promise<any> => {
+    const service = await executeServiceSelect(
+      'select * from services where endpoint = ? and is_active = ?',
+      [endpoint, true]
+    ).then(results => results[0]);
+
+    if (!service) {
       throw new Error('Service not found');
     }
-    if (!service.isActive) {
-      throw new Error('Inactive service');
-    }
-    if (service.endpoint != endpoint) {
-      throw new Error('Endpoint not allowed for this service');
-    }
+
     if (service.currentCalls >= service.maxCalls) {
       throw new Error('Service quota exceeded');
     }
-  }
-  async function updateService(endpoint: string, operator: string) {
-    const service = await services.where('endpoint','==', endpoint).first();
-    if (!service ) {
-      throw new Error('Service not found');
-    }
-    if (operator === '+') {
-      await services.update(service.id, {
-        ...service,
-        currentCalls: service.currentCalls + 1,
-      });
-    } else if (operator === '-') {
-      await services.update(service.id, {
-        ...service,
-        currentCalls: service.currentCalls - 1,
-      });
-    } else {
-      throw new Error('Invalid operator');
-    }
-  }
 
-  async function createServiceUsage(endpoint: string, ipAddress: string, userAgent: string): Promise<any> {
-    const service = await services.where('endpoint','==', endpoint).first();
-    if (!service ) {
+    return service;
+  };
+  const updateServiceUsage = async (
+    service: any, 
+    endpoint: string, 
+    request: any
+  ): Promise<void> => {
+    const transactionResponse = await userDO.fetch('http://user.internal/dynamic/multi-table', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        operations: [
+          {
+            table: 'services',
+            operation: 'update',
+            id: service.id,
+            data: {
+              currentCalls: service.currentCalls + 1,
+            }
+          },
+          {
+            table: 'service_usages',
+            operation: 'insert',
+            data: {
+              serviceId: service.id,
+              endpoint: endpoint,
+              timestamp: new Date().toISOString(),
+              userAgent: request.userAgent,
+              ipAddress: request.ipAddress,
+            }
+          }
+        ]
+      })
+    });    
+
+    if (!transactionResponse.ok) {
+      throw new Error(`Failed to update service usage: ${transactionResponse.statusText}`);
+    }
+  };
+
+  const executeAIModel = async ( 
+    endpoint: string,
+    request: any,
+    prompt: string,
+    images: File[],
+    processResult: (response: any, service: any) => Promise<any>
+  ): Promise<any> => {
+    // Validate and update service usage
+    const service = await validateServiceUsage(endpoint);
+    if (!service) {
       throw new Error('Service not found');
     }
-    const serviceUsage = await serviceUsages.create({
-      serviceId: service.id,
-      endpoint: endpoint,
-      timestamp: new Date().toISOString(),
-      userAgent: userAgent,
-      ipAddress: ipAddress,
+
+    // Process images and prepare AI request
+    const imagePromises = images.map(img => toBase64(img));
+    const imageB64s = await Promise.all(imagePromises);
+
+    const messages = [{
+      role: 'user',
+      content: [
+        { type: 'text', text: prompt },
+        ...imageB64s.map(image => ({ type: 'image', image }))
+      ]
+    }];
+
+    // Execute AI model
+    const response = await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
+      messages,
+      max_tokens: request.options.maxTokens,
     });
-    return serviceUsage;
-  }
+
+    // Process result and update service usage
+    return await processResult(response, service);
+  };
+
+  const processDocumentRecognition = async (
+    response: any, 
+    service: any,
+    request: DocumentRecognition
+  ): Promise<DocumentExtractionResult> => {
+
+    const extractedData = safeJsonParse(response.response || '{}');
+    const returnData = {
+      documentType: request.docType,
+      extractedData,
+      confidence: calculateConfidence(extractedData),
+      processingTime: Date.now(),
+      metadata: {
+        imageSize: request.image.size,
+        imageType: request.image.type
+      }
+    };
+    // Update service usage
+    await updateServiceUsage(service, request.endpoint, request);
+
+    return returnData;
+  };
+
+  const processFaceSearch = async (
+    response: any, 
+    service: any,
+    request: FaceSearch
+  ): Promise<FaceDetectionResult> => {
+
+    const facesData = safeJsonParse(response.response || '[]');
+    const faces = Array.isArray(facesData) ? facesData : [facesData];
+    
+    const returnData = {
+      faces: faces.map((face: any) => ({
+        boundingBox: face.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
+        confidence: face.confidence || request.options.detectionThreshold,
+        landmarks: face.landmarks || [],
+        attributes: face.attributes || {}
+      })),
+      confidence: calculateFaceDetectionConfidence(faces),
+      faceCount: faces.length,
+      processingTime: Date.now()
+    };
+    // Update service usage
+    await updateServiceUsage(service, request.endpoint, request);
+
+    return returnData;
+  };
+
+  const processFaceVerification = async (
+    response: any, 
+    service: any,
+    request: FaceVerification
+  ): Promise<FaceVerificationResult> => {
+
+    const result = safeJsonParse(response.response || '{"similarity": 0, "isMatch": false}');
+    const similarity = result.similarity || 0;
+    const isMatch = similarity >= request.options.similarityThreshold;
+    
+    const returnData = {
+      similarity,
+      isMatch,
+      details: result.description || 'No description provided',
+      confidence: calculateFaceVerificationConfidence(similarity),
+      attributes: result.attributes || {},
+      processingTime: Date.now()
+    };
+    // Update service usage
+    await updateServiceUsage(service, request.endpoint, request);
+
+    return returnData;
+  };
+
+  const processLivenessDetection = async (
+    response: any, 
+    service: any,
+    request: LivenessDetection
+  ): Promise<LivenessResult> => {
+    // Update service usage
+    await updateServiceUsage(service, request.endpoint, request);
+
+    const result = safeJsonParse(response.response || '{"isLive": false, "details": "No liveness detected", "riskScore": 0.8}');
+    
+    const returnData =  {
+      isLive: result.isLive || false,
+      details: result.details || 'No details provided',
+      confidence: 1 - (result.riskScore || 0.8),
+      spoofType: result.spoofType,
+      riskScore: result.riskScore,
+      processingTime: Date.now(),
+      recommendations: result.recommendations || []
+    };
+    // Update service usage
+    await updateServiceUsage(service, request.endpoint, request);
+
+    return returnData;
+  };
 
   return {
-    async recognizeDocument(request: DocumentRecognition): Promise<DocumentExtractionResult> {      
-      let isCalled = false;
-      try {
-        await validateEndpoint(request.endpoint);
-        await updateService(request.endpoint,"+");
-        isCalled = true;
-
-        const imgB64 = await toBase64(request.image);
-        const prompt = getDocumentPrompt(request.docType);
-
-        const response = await userDO.getEnv().AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
-          messages: [{ 
-            role: 'user', 
-            content: [
-              { type: 'text', text: prompt }, 
-              { type: 'image', image: imgB64 }
-            ] 
-          }],
-          max_tokens: request.options.maxTokens,
-        });
-
-        const extractedData = safeJsonParse(response.response || '{}');
-
-        await createServiceUsage(request.endpoint, request.ipAddress, request.userAgent);
-
-        return {
-          documentType: request.docType,
-          extractedData,
-          confidence: calculateConfidence(extractedData),
-          processingTime: Date.now(), 
-          metadata: {
-            imageSize: request.image.size,
-            imageType: request.image.type
-          }
-        };
-
-      }
-      catch (e) {
-        if (isCalled) {
-          await updateService(request.endpoint,"-");
-        }
-        throw e;
-      }
+    async recognizeDocument(request: DocumentRecognition): Promise<DocumentExtractionResult> {
+      return executeAIModel(
+        request.endpoint,
+        request,
+        getDocumentPrompt(request.docType),
+        [request.image],
+        (response, service) => processDocumentRecognition(response, service, request)
+      );
     },
 
     async faceSearch(request: FaceSearch): Promise<FaceDetectionResult> {
-      let isCalled = false;
-      try {
-        await validateEndpoint(request.endpoint);
-        await updateService(request.endpoint,"+");
-        isCalled = true;
-        const imgB64 = await toBase64(request.image);
-        const prompt = 'Detect faces in this image. Return the number of faces and their bounding boxes (x, y, width, height) in JSON format.';
-
-        const response = await userDO.getEnv().AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
-          messages: [{ 
-            role: 'user', 
-            content: [
-              { type: 'text', text: prompt }, 
-              { type: 'image', image: imgB64 }
-            ] 
-          }],
-          max_tokens: request.options.maxTokens,
-        });
-
-        const facesData = safeJsonParse(response.response || '[]');
-        const faces = Array.isArray(facesData) ? facesData : [facesData];
-
-        await createServiceUsage(request.endpoint, request.ipAddress, request.userAgent);
-
-        return {
-          faces: faces.map((face: any) => ({
-            boundingBox: face.boundingBox || { x: 0, y: 0, width: 0, height: 0 },
-            confidence: face.confidence || request.options.detectionThreshold,
-            landmarks: face.landmarks || [],
-            attributes: face.attributes || {}
-          })),
-          confidence: calculateFaceDetectionConfidence(faces),
-          faceCount: faces.length,
-          processingTime: Date.now()
-        };
-      }
-      catch (e) {
-        if (isCalled) {
-          await updateService(request.endpoint,"-");
-        }
-        throw e;
-      }        
+      return executeAIModel(
+        request.endpoint,
+        request,
+        'Detect faces in this image. Return the number of faces and their bounding boxes (x, y, width, height) in JSON format.',
+        [request.image],
+        (response, service) => processFaceSearch(response, service, request)
+      );
     },
 
     async faceVerify(request: FaceVerification): Promise<FaceVerificationResult> {
-      let isCalled = false;
-      try {
-        await validateEndpoint(request.endpoint);
-        await updateService(request.endpoint,"+");
-        isCalled = true;
-
-        const img1B64 = await toBase64(request.image);
-        const img2B64 = await toBase64(request.image2!);
-
-        const prompt = `Compare two faces in these images. Return a JSON object with { similarity: number (0-1), isMatch: boolean, description: string }. Image 1: describe age, gender, facial features. Image 2: compare to Image 1.`;
-
-        const response = await userDO.getEnv().AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image', image: img1B64 },
-                { type: 'image', image: img2B64 },
-              ],
-            },
-          ],
-          max_tokens: request.options.maxTokens,
-        });
-
-        const result = safeJsonParse(response.response || '{"similarity": 0, "isMatch": false, "description": "No description provided"}');
-        const similarity = result.similarity || 0;
-        const isMatch = similarity >= request.options.similarityThreshold;
-
-        await createServiceUsage(request.endpoint, request.ipAddress, request.userAgent);
-        
-        return {
-          similarity,
-          isMatch,
-          details: result.description || 'No description provided',
-          confidence: calculateFaceVerificationConfidence(similarity),
-          attributes: result.attributes || {},
-          processingTime: Date.now()
-        };
+      if (!request.image2) {
+        throw new Error('Second image required for verification');
       }
-      catch (e) {
-        if (isCalled) {
-          await updateService(request.endpoint,"-");
-        }
-        throw e;
-      }        
+
+      return executeAIModel(
+        request.endpoint,
+        request,
+        'Compare two faces in these images. Return a JSON object with { similarity: number (0-1), isMatch: boolean, description: string }.',
+        [request.image, request.image2],
+        (response, service) => processFaceVerification(response, service, request)
+      );
     },
 
     async livenessDetection(request: LivenessDetection): Promise<LivenessResult> {
-      let isCalled = false;
-      try {
-        await validateEndpoint(request.endpoint);
-        await updateService(request.endpoint,"+");
-        isCalled = true;
+      const prompt = request.isVideo
+        ? 'Analyze this image as a video frame for liveness detection. Return { isLive: boolean, details: string, spoofType: string, riskScore: number } in JSON format.'
+        : 'Analyze this image to detect if it is a live face or a spoof. Return { isLive: boolean, details: string, spoofType: string, riskScore: number } in JSON format.';
 
-        const imgB64 = await toBase64(request.image);
-        
-        const prompt = request.isVideo
-          ? 'Analyze this image as a frame from a video for liveness detection. Detect signs of a live person (e.g., blinks, head turns). Return { isLive: boolean, details: string, spoofType: string, riskScore: number } in JSON format.'
-          : 'Analyze this image to detect if it is a live face or a spoof (e.g., photo, screen, mask). Return { isLive: boolean, details: string, spoofType: string, riskScore: number } in JSON format.';
-
-        const response = await userDO.getEnv().AI.run('@cf/meta/llama-3.2-11b-vision-instruct', {
-          messages: [{ 
-            role: 'user', 
-            content: [
-              { type: 'text', text: prompt }, 
-              { type: 'image', image: imgB64 }
-            ] 
-          }],
-          max_tokens: request.options.maxTokens,
-        });
-
-        const result = safeJsonParse(response.response || '{"isLive": false, "details": "No liveness detected", "riskScore": 0.8}');
-
-        await createServiceUsage(request.endpoint, request.ipAddress, request.userAgent);
-                
-        return {
-          isLive: result.isLive || false,
-          details: result.details || 'No details provided',
-          confidence: 1 - (result.riskScore || 0.8),
-          spoofType: result.spoofType,
-          riskScore: result.riskScore,
-          processingTime: Date.now(),
-          recommendations: result.recommendations || []
-        };
-      }
-      catch (e) {
-        if (isCalled) {
-          await updateService(request.endpoint,"-");
-        }
-        throw e;
-      }        
+      return executeAIModel(
+        request.endpoint,
+        request,
+        prompt,
+        [request.image],
+        (response, service) => processLivenessDetection(response, service, request)
+      );
     }
   };
 }

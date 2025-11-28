@@ -1,10 +1,8 @@
-// constant.ts
-
 export const EKYC_SERVICES = {
   DOCUMENT: {
     RECOGNIZE: {
       path: '/ekyc/recognize-document',
-      price: 1000 // VND per request
+      price: 1000
     }
   },
   FACE: {
@@ -23,9 +21,6 @@ export const EKYC_SERVICES = {
   }
 } as const;
 
-export const EKYC_SERVICE_PERMISSIONS = [
-  EKYC_SERVICES.DOCUMENT.RECOGNIZE.path,
-  EKYC_SERVICES.FACE.SEARCH.path,
-  EKYC_SERVICES.FACE.LIVENESS.path,
-  EKYC_SERVICES.FACE.VERIFY.path
-];
+export const EKYC_SERVICE_PERMISSIONS = Object.values(EKYC_SERVICES)
+  .flatMap(service => Object.values(service))
+  .map(service => service.path);

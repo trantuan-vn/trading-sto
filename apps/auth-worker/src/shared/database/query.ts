@@ -14,7 +14,7 @@ type LogicalCondition = {
 type WhereCondition = Condition | LogicalCondition;
 
 export class GenericQuery<T> {
-  private conditions: WhereCondition[] = [];
+  private conditions: Array<WhereCondition> = [];
   private orderByClause?: { field: string; direction: 'asc' | 'desc' };
   private limitCount?: number;
   private offsetCount?: number;
@@ -113,30 +113,43 @@ export class GenericQuery<T> {
         const operator = condition.type.toUpperCase();
         return `(${subClauses.join(` ${operator} `)})`;
       } else {
-        // Simple condition
-        const jsonPath = `$.${condition.path}`;
+        // Simple condition - query directly on column names instead of JSON
+        const columnName = condition.path;
+        
+        // Handle system columns specially
+        const systemColumns = ['id', 'createdAt', 'updatedAt', 'userId', 'organizationId'];
+        const dbColumnMap: Record<string, string> = {
+          'id': 'id',
+          'createdAt': 'created_at',
+          'updatedAt': 'updated_at',
+          'userId': 'user_id',
+          'organizationId': 'organization_id'
+        };
+
+        const dbColumn = dbColumnMap[columnName] || columnName;
+
         switch (condition.operator) {
           case '==':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') = ?`;
+            return `"${dbColumn}" = ?`;
           case '!=':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') != ?`;
+            return `"${dbColumn}" != ?`;
           case '>':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') > ?`;
+            return `"${dbColumn}" > ?`;
           case '<':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') < ?`;
+            return `"${dbColumn}" < ?`;
           case '>=':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') >= ?`;
+            return `"${dbColumn}" >= ?`;
           case '<=':
             params.push(condition.value);
-            return `json_extract(data, '${jsonPath}') <= ?`;
+            return `"${dbColumn}" <= ?`;
           case 'includes':
             params.push(`%${condition.value}%`);
-            return `json_extract(data, '${jsonPath}') LIKE ?`;
+            return `"${dbColumn}" LIKE ?`;
           case 'in':
             if (!Array.isArray(condition.value)) {
               throw new Error('IN operator requires an array value');
@@ -146,7 +159,7 @@ export class GenericQuery<T> {
             }
             const placeholders = condition.value.map(() => '?').join(', ');
             params.push(...condition.value);
-            return `json_extract(data, '${jsonPath}') IN (${placeholders})`;
+            return `"${dbColumn}" IN (${placeholders})`;
           default:
             throw new Error(`Unsupported operator: ${condition.operator}`);
         }
@@ -167,6 +180,7 @@ export class GenericQuery<T> {
     let sql: string;
     let params: any[] = [];
 
+    // Base WHERE clause for user/organization context
     if (this.organizationContext) {
       sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
       params = [this.userId, this.organizationContext];
@@ -175,7 +189,7 @@ export class GenericQuery<T> {
       params = [this.userId];
     }
 
-    // Add WHERE conditions
+    // Add query conditions
     const whereClause = this.buildWhereClause(this.conditions, params);
     if (whereClause) {
       sql += ` AND (${whereClause})`;
@@ -184,13 +198,18 @@ export class GenericQuery<T> {
     // Add ORDER BY
     if (this.orderByClause) {
       const { field, direction } = this.orderByClause;
-      if (field === 'createdAt' || field === 'updatedAt') {
-        const dbField = field === 'createdAt' ? 'created_at' : 'updated_at';
-        sql += ` ORDER BY ${dbField} ${direction.toUpperCase()}`;
-      } else {
-        const jsonPath = `$.${field}`;
-        sql += ` ORDER BY json_extract(data, '${jsonPath}') ${direction.toUpperCase()}`;
-      }
+      
+      // Map field names to database column names
+      const dbColumnMap: Record<string, string> = {
+        'id': 'id',
+        'createdAt': 'created_at',
+        'updatedAt': 'updated_at',
+        'userId': 'user_id',
+        'organizationId': 'organization_id'
+      };
+      
+      const dbColumn = dbColumnMap[field] || field;
+      sql += ` ORDER BY "${dbColumn}" ${direction.toUpperCase()}`;
     }
 
     // Add LIMIT and OFFSET
@@ -205,13 +224,22 @@ export class GenericQuery<T> {
     const results: Array<T & { id: string; createdAt: Date; updatedAt: Date }> = [];
 
     for (const row of cursor) {
-      const data = JSON.parse(row.data as string);
-      results.push({
-        ...data,
+      // Map database row to result object (similar to GenericTable's mapRowToResult)
+      const result: any = {
         id: row.id as string,
         createdAt: new Date(row.created_at as number),
-        updatedAt: new Date(row.updated_at as number),
-      });
+        updatedAt: new Date(row.updated_at as number)
+      };
+
+      // Copy all other columns (excluding system columns) to the result
+      const systemColumns = ['id', 'created_at', 'updated_at', 'user_id', 'organization_id'];
+      for (const [key, value] of Object.entries(row)) {
+        if (!systemColumns.includes(key)) {
+          result[key] = value;
+        }
+      }
+
+      results.push(result as T & { id: string; createdAt: Date; updatedAt: Date });
     }
 
     return results;
@@ -223,86 +251,6 @@ export class GenericQuery<T> {
   }
 
   async count(): Promise<number> {
-    let sql: string;
-    let params: any[] = [];
-
-    if (this.organizationContext) {
-      sql = `SELECT COUNT(*) as count FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
-      params = [this.userId, this.organizationContext];
-    } else {
-      sql = `SELECT COUNT(*) as count FROM "${this.tableName}" WHERE user_id = ?`;
-      params = [this.userId];
-    }
-
-    const whereClause = this.buildWhereClause(this.conditions, params);
-    if (whereClause) {
-      sql += ` AND (${whereClause})`;
-    }
-
-    const cursor = this.storage.sql.exec(sql, ...params);
-    const results = cursor.toArray();
-    return results.length > 0 ? Number(results[0].count) : 0;
-  }
-  getSync(): Array<T & { id: string; createdAt: Date; updatedAt: Date }> {
-    let sql: string;
-    let params: any[] = [];
-
-    if (this.organizationContext) {
-      sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ? AND organization_id = ?`;
-      params = [this.userId, this.organizationContext];
-    } else {
-      sql = `SELECT * FROM "${this.tableName}" WHERE user_id = ?`;
-      params = [this.userId];
-    }
-
-    // Add WHERE conditions
-    const whereClause = this.buildWhereClause(this.conditions, params);
-    if (whereClause) {
-      sql += ` AND (${whereClause})`;
-    }
-
-    // Add ORDER BY
-    if (this.orderByClause) {
-      const { field, direction } = this.orderByClause;
-      if (field === 'createdAt' || field === 'updatedAt') {
-        const dbField = field === 'createdAt' ? 'created_at' : 'updated_at';
-        sql += ` ORDER BY ${dbField} ${direction.toUpperCase()}`;
-      } else {
-        const jsonPath = `$.${field}`;
-        sql += ` ORDER BY json_extract(data, '${jsonPath}') ${direction.toUpperCase()}`;
-      }
-    }
-
-    // Add LIMIT and OFFSET
-    if (this.limitCount) {
-      sql += ` LIMIT ${this.limitCount}`;
-    }
-    if (this.offsetCount) {
-      sql += ` OFFSET ${this.offsetCount}`;
-    }
-
-    const cursor = this.storage.sql.exec(sql, ...params);
-    const results: Array<T & { id: string; createdAt: Date; updatedAt: Date }> = [];
-
-    for (const row of cursor) {
-      const data = JSON.parse(row.data as string);
-      results.push({
-        ...data,
-        id: row.id as string,
-        createdAt: new Date(row.created_at as number),
-        updatedAt: new Date(row.updated_at as number),
-      });
-    }
-
-    return results;
-  }
-
-  firstSync(): (T & { id: string; createdAt: Date; updatedAt: Date }) | null {
-    const results = this.limit(1).getSync();
-    return results[0] || null;
-  }
-
-  countSync(): number {
     let sql: string;
     let params: any[] = [];
 

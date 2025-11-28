@@ -1,4 +1,5 @@
 import { Context } from 'hono'
+import CryptoJS from 'crypto-js';
 
 export const handleError = async (c: Context, e: any, defaultMessage: string) => {
   try {
@@ -107,7 +108,7 @@ export const handleErrorWithoutIp = async (e: any, defaultMessage: string) => {
 };
 
 export const parseBody = async (c: Context, schema: any) => {
-  const contentType = c.req.header('content-type') || '';
+  const contentType = c.req.header('Content-Type') || '';
   if (contentType.includes('application/json')) {
     return schema.parse(await c.req.json());
   } else {
@@ -120,22 +121,22 @@ export const parseBody = async (c: Context, schema: any) => {
   }
 };
 
-export function getIdFromName<T>(c: Context, identifier: string, bindingName: string): T {
+export function getIdFromName(c: Context, identifier: string, bindingName: string): DurableObjectStub {
   const binding = c.env[bindingName];
   if (!binding) {
     throw new Error(`Durable Object binding '${bindingName}' not found. Make sure it's configured in wrangler.jsonc`);
   }
   const doID = binding.idFromName(identifier);
-  return binding.get(doID) as unknown as T;
+  return binding.get(doID); // as unknown as T;
 }
 
-export function getIdFromString<T>(c: Context, id: string, bindingName: string): T {
+export function getIdFromString(c: Context, id: string, bindingName: string): DurableObjectStub {
   const binding = c.env[bindingName];
   if (!binding) {
     throw new Error(`Durable Object binding '${bindingName}' not found. Make sure it's configured in wrangler.jsonc`);
   }
-  const doID = binding.idFromName(id);
-  return binding.get(doID) as unknown as T;
+  const doID = binding.idFromString(id);
+  return binding.get(doID); // as unknown as T;
 }
 
 export function isAdmin(identifier: string) {
@@ -154,6 +155,45 @@ export const getSessionIdHash = (ipAddress: string, userAgent: string, secret: s
 }
 
 export const getClientIp = (c: any): string => {
-  return c.req.headers.get('CF-Connecting-IP') || c.req.headers.get('X-Real-IP') || c.req.headers.get('X-Forwarded-For');
+  return c.req.raw.headers.get('CF-Connecting-IP') || c.req.raw.headers.get('X-Real-IP') || c.req.raw.headers.get('X-Forwarded-For');
 };
 
+// utils/featureLoader.ts
+type FeatureMethods = { [key: string]: Function };
+
+export class FeatureLoader {
+  private features: Map<string, FeatureMethods> = new Map();
+
+  // Đăng ký feature mới
+  registerFeature(featureName: string, methods: FeatureMethods): void {
+    console.log(`📦 FeatureLoader: Đăng ký feature '${featureName}' với ${Object.keys(methods).length} methods`);
+    this.features.set(featureName, methods);
+  }
+
+  // Áp dụng tất cả features vào class
+  applyToClass(targetClass: any, context: any): void {
+    console.log('🔧 FeatureLoader: Áp dụng features vào class...');
+    
+    this.features.forEach((methods, featureName) => {
+      Object.entries(methods).forEach(([methodName, method]) => {
+        if (typeof method === 'function') {
+          // Bind method với context và đăng ký vào class
+          targetClass.prototype[methodName] = method.bind(context);
+          console.log(`   ✅ Thêm method: ${methodName} từ feature ${featureName}`);
+        }
+      });
+    });
+  }
+
+  // Lấy tất cả methods (cho TypeScript types)
+  getAllMethods(): string[] {
+    const methods: string[] = [];
+    this.features.forEach(featureMethods => {
+      methods.push(...Object.keys(featureMethods));
+    });
+    return methods;
+  }
+}
+
+// Global feature loader instance
+export const featureLoader = new FeatureLoader();

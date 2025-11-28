@@ -26,55 +26,6 @@ export const PricePolicySchema = z.object({
   endDate: z.string().optional(),
 });
 
-export const CreatePricePolicySchema = z.object({
-  name: z.string().min(1).max(100),
-  type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT', 'TIERED', 'USAGE_BASED']),
-  value: z.number().min(0),
-  applicableTo: z.enum(['ALL', 'SPECIFIC']),
-  targetType: z.enum(['SERVICE', 'USER']),
-  targetIds: z.array(z.string()).optional(),
-  conditions: z.object({
-    userRoles: z.array(z.enum(['member', 'admin'])).optional(),
-    maxCalls: z.number().min(0).optional(),
-    minQuantity: z.number().min(1).optional(),
-    usagePercentage: z.number().min(0).max(100).optional(),
-    tiers: z.array(z.object({
-      minAmount: z.number().optional(),
-      minUsage: z.number().optional(),
-      type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT']),
-      value: z.number(),
-    })).optional(),
-  }).optional(),
-  priority: z.number().min(0).default(0),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-});
-
-export const UpdatePricePolicySchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT', 'TIERED', 'USAGE_BASED']).optional(),
-  value: z.number().min(0).optional(),
-  applicableTo: z.enum(['ALL', 'SPECIFIC']).optional(),
-  targetType: z.enum(['SERVICE', 'USER']).optional(),
-  targetIds: z.array(z.string()).optional(),
-  conditions: z.object({
-    userRoles: z.array(z.enum(['member', 'admin'])).optional(),
-    maxCalls: z.number().min(0).optional(),
-    minQuantity: z.number().min(1).optional(),
-    usagePercentage: z.number().min(0).max(100).optional(),
-    tiers: z.array(z.object({
-      minAmount: z.number().optional(),
-      minUsage: z.number().optional(),
-      type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT']),
-      value: z.number(),
-    })).optional(),
-  }).optional(),
-  priority: z.number().min(0).optional(),
-  status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-});
-
 export const ServicePriceCalculationRequestSchema = z.object({
   basePrice: z.number().min(0),
   serviceId: z.string(),
@@ -96,36 +47,18 @@ export const UserPriceCalculationRequestSchema = z.object({
   quantity: z.number().min(1).optional().default(1),
   currency: z.string().optional().default('VND'),
 });
-
-export const PriceCalculationLogSchema = z.object({
-  basePrice: z.number().min(0),
-  finalPrice: z.number().min(0),
-  totalDiscount: z.number().min(0),
-  appliedPolicies: z.array(z.object({
-    policyId: z.string(),
-    policyName: z.string(),
-    discount: z.number(),
-    type: z.string(),
-  })),
-  serviceId: z.string().optional(),
-  userId: z.string().optional(),
-  customerId: z.string().optional(),
-  targetType: z.enum(['SERVICE', 'USER']),
-});
-
+export const PolicyIdSchema = z.string().uuid(); // hoặc regex phù hợp
+export const StatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 // Types
 export type PricePolicy = z.infer<typeof PricePolicySchema>;
-export type CreatePricePolicy = z.infer<typeof CreatePricePolicySchema>;
-export type UpdatePricePolicy = z.infer<typeof UpdatePricePolicySchema>;
 export type ServicePriceCalculationRequest = z.infer<typeof ServicePriceCalculationRequestSchema>;
 export type UserPriceCalculationRequest = z.infer<typeof UserPriceCalculationRequestSchema>;
-export type PriceCalculationLog = z.infer<typeof PriceCalculationLogSchema>;
 
 // Domain Interfaces
 export interface IPriceInfrastructureService {
-  createPricePolicy(request: CreatePricePolicy): Promise<any>;
-  updatePricePolicy(policyId: string, request: UpdatePricePolicy): Promise<any>;
-  getPricePolicies(status?: string): Promise<any[]>;
+  createPricePolicy(request: PricePolicy): Promise<any>;
+  updatePricePolicy(policyId: string, request: PricePolicy): Promise<any>;
+  getPricePolicies(limit: number, offset: number, status?: string): Promise<any[]>;
   getPricePolicy(policyId: string): Promise<any>;
   deletePricePolicy(policyId: string): Promise<void>;
   calculateServicePrice(request: ServicePriceCalculationRequest): Promise<any>;

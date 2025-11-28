@@ -38,7 +38,7 @@ export function WalletConnectButton({ className, ...props }: React.ComponentProp
       // Thông báo cho người dùng biết đang lấy thông tin xác thực
       toast.info("Đang chuẩn bị thông tin xác thực...");
 
-      const nonceResponse = await fetch("https://api.unitoken.trade/auth/wallet/nonce", {
+      const nonceResponse = await fetch("https://api.unitoken.trade/dashboard/auth/wallet/nonce", {
         method: "GET",
         credentials: "include",
       });

@@ -8,6 +8,8 @@ export const ServiceSchema = z.object({
   currentCalls: z.number().min(0).default(0),
   expiresAt: z.string().optional(),
   isActive: z.boolean().default(true),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().optional(),
 });
 
 export const RegisterServiceSchema = z.object({
@@ -25,13 +27,14 @@ export const ServiceUsageSchema = z.object({
   ipAddress: z.string().optional(),
 });
 
+export const ServiceIdSchema = z.string().uuid();
+
 // Types
 export type Service = z.infer<typeof ServiceSchema>;
 export type RegisterService = z.infer<typeof RegisterServiceSchema>;
 export type ServiceUsage = z.infer<typeof ServiceUsageSchema>;
 
 // Domain Interfaces
-
 export interface IServiceInfrastructureService {
   registerService(request: RegisterService): Promise<any>;
   getUserServices(): Promise<any[]>;

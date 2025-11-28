@@ -1,5 +1,5 @@
 import { Context } from 'hono';
-import { getIdFromName, handleError } from '../../shared/utils';
+import { getIdFromName } from '../../shared/utils';
 import { UserDO } from './infrastructure/UserDO';
 import { BroadcastServiceDO } from './infrastructure/BroadcastServiceDO';
 
@@ -10,14 +10,22 @@ interface IWebsocketApplicationService {
 
 export function createWebsocketApplicationService(c: Context, bindingName: string): IWebsocketApplicationService {
     return {
-        connectWebSocketUseCase: (identifier: string) => {
-            const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+        connectWebSocketUseCase: async (identifier: string) => {
+            const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;;
             const request = c.req.raw;
-            return userDO.fetch(request);
+            const response = await userDO.fetch(request);
+            if (response.status !== 500) {
+                throw new Error(`Failed to connect WebSocket with identifier (${identifier})`);
+            }
+            return response;
         },
-        broadcastMessageUseCase: (request: Request) => {
-            const broadcastService = getIdFromName<BroadcastServiceDO>(c, "global", "BROADCAST_SERVICE_DO");
-            return broadcastService.fetch(request);
+        broadcastMessageUseCase: async (request: Request) => {
+            const broadcastServiceDO = getIdFromName(c, "global", "BROADCAST_SERVICE_DO")  as DurableObjectStub<BroadcastServiceDO>;
+            const response = await broadcastServiceDO.fetch(request);
+            if (response.status !== 500) {
+                throw new Error(`Failed to broadcast message, status: ${response.status}, body: ${await response.text()}, url: ${request.url}, method: ${request.method}`);
+            }
+            return response;
         }
     }
 }

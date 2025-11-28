@@ -1,10 +1,11 @@
 import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
-import { clearAuthCookies, setCookieWithOption } from './utils.js';
 import { createApplicationService } from './application';
+import { cookieUtils } from './utils';
 import { handleError, getClientIp } from '../../shared/utils';
-import { AUTH_CONSTANTS } from './constant.js';
+import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
+// Main authentication middleware factory
 export function createAuthMiddleware(bindingName: string) {
   return async (c: Context, next: Next) => {
     try {
@@ -17,20 +18,21 @@ export function createAuthMiddleware(bindingName: string) {
       
       // If no refresh token, clear cookies and continue
       if (!refreshToken) {
-        clearAuthCookies(c);
+        cookieUtils.clearAuthCookies(c);
         return await next();
       }
       
       await processAuthentication(c, bindingName, sessionId, token, refreshToken);
     } catch (error) {
-      handleError(c, error, 'Failed to authenticate user');
-      clearAuthCookies(c);
+      console.error('Auth middleware error:', error);
+      cookieUtils.clearAuthCookies(c);
     }
     
     await next();
   };
 }
 
+// Authentication processing logic
 async function processAuthentication(
   c: Context,
   bindingName: string,
@@ -49,10 +51,12 @@ async function processAuthentication(
       await handleTokenVerification(c, applicationService, sessionId, token, refreshToken);
     }
   } catch (error) {
+    console.error('Authentication process failed:', error);
     throw error;
   }
 }
 
+// Handle token refresh flow
 async function handleTokenRefresh(
   c: Context,
   applicationService: any,
@@ -60,20 +64,27 @@ async function handleTokenRefresh(
   refreshToken: string
 ): Promise<void> {
   if (!sessionId) {
-    clearAuthCookies(c);
+    cookieUtils.clearAuthCookies(c);
     return;
   }
   
-  const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
-  if (result.ok) {
-    setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-    setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
-    c.set('user', result.user);
-  } else {
-    throw new Error('Invalid refresh token');
+  try {
+    const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
+    if (result.ok) {
+      cookieUtils.setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+      cookieUtils.setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+      c.set('user', result.user);
+    } else {
+      throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
+    }
+  } catch (error) {
+    console.error('Token refresh failed:', error);
+    cookieUtils.clearAuthCookies(c);
+    throw error;
   }
 }
 
+// Handle token verification flow
 async function handleTokenVerification(
   c: Context,
   applicationService: any,
@@ -82,63 +93,235 @@ async function handleTokenVerification(
   refreshToken: string
 ): Promise<void> {
   if (!sessionId) {
-    throw new Error('Session not found');
+    throw new Error(ERROR_MESSAGES.AUTH.SESSION_EXPIRED);
   }
   
-  const result = await applicationService.verifyTokenUseCase(sessionId, token, refreshToken);
-  if (result.ok) {
-    c.set('user', result.user);
-  } else {
+  try {
+    const result = await applicationService.verifyTokenUseCase(sessionId, token, refreshToken);
+    if (result.ok) {
+      c.set('user', result.user);
+    } else {
+      // Token verification failed, try refresh
+      await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
+    }
+  } catch (error) {
+    console.error('Token verification failed:', error);
+    // Try to refresh token on verification failure
     await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
   }
 }
 
+// Require authentication middleware
 export function requireAuth(c: Context) {
   const user = c.get('user');
   if (!user) {
-    throw new Error('Not authenticated');
+    throw new Error(ERROR_MESSAGES.AUTH.NOT_AUTHENTICATED);
   }
   return user;
 }
 
+// Require admin role middleware
+export function requireAdmin(c: Context) {
+  const user = requireAuth(c);
+  if (user.role !== 'admin') {
+    throw new Error(ERROR_MESSAGES.AUTH.NOT_AUTHORIZED);
+  }
+  return user;
+}
+
+// Rate limiting middleware factory
 export function createRateLimitMiddleware() {
   return async (c: Context, next: Next) => {
-    
     try {
       const ip = getClientIp(c);
-      // Lấy thông tin IP từ KV
-      const ipData = await c.env.NONCE_KV.get(ip);
+      if (!ip) {
+        return await next();
+      }
+
+      const ipData = await c.env.NONCE_KV.get(`rate_limit:${ip}`);
       
       if (ipData) {
         const data = JSON.parse(ipData);
         const now = Date.now();
         
-        // Kiểm tra thời gian chặn
-        if (now < data.blockUntil) {
-          return new Response('IP Blocked', { status: 429 });
+        // Check if IP is blocked
+        if (now < data.blockUntil && data.failCount >= AUTH_CONSTANTS.RATE_LIMIT_MAX) {
+          const remainingTime = Math.ceil((data.blockUntil - now) / 1000);
+          return c.json({ 
+            error: ERROR_MESSAGES.AUTH.RATE_LIMIT_EXCEEDED,
+            retryAfter: remainingTime 
+          }, 429);
         }
         
-        // Reset nếu hết thời gian chặn
+        // Reset if block period has expired
         if (now > data.blockUntil) {
-          await c.env.NONCE_KV.delete(ip);
+          await c.env.NONCE_KV.delete(`rate_limit:${ip}`);
         }
-      }      
+      }
+      
+      await next();
+      
     } catch (error) {
-      handleError(c, error, 'Failed to check rate limit');
-      clearAuthCookies(c);
+      console.error('Rate limit middleware error:', error);
+      await next();
+    }
+  };
+}
+
+// Update rate limit on failure
+export async function updateRateLimit(env: Env, ip: string): Promise<void> {
+  if (!ip) return;
+
+  const key = `rate_limit:${ip}`;
+  const now = Date.now();
+  const existingData = await env.NONCE_KV.get(key);
+  
+  let data: any = { failCount: 1, lastAttempt: now, blockUntil: now + AUTH_CONSTANTS.RATE_LIMIT_WINDOW };
+  
+  if (existingData) {
+    const existing = JSON.parse(existingData);
+    data = {
+      failCount: existing.failCount + 1,
+      lastAttempt: now,
+      blockUntil: now + AUTH_CONSTANTS.RATE_LIMIT_WINDOW
+    };
+  }
+  
+  await env.NONCE_KV.put(key, JSON.stringify(data), {
+    expirationTtl: Math.ceil(AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000) * 2
+  });
+}
+
+// Security headers middleware
+export function securityHeadersMiddleware() {
+  return async (c: Context, next: Next) => {
+    await next();
+    
+    // Security headers
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('X-Frame-Options', 'DENY');
+    c.header('X-XSS-Protection', '1; mode=block');
+    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
+    
+    // CSP header
+    c.header(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;"
+    );
+  };
+}
+
+// CORS middleware for auth endpoints
+export function corsMiddleware() {
+  return async (c: Context, next: Next) => {
+    const origin = c.req.header('origin');
+    const allowedOrigins = [c.env.FRONTEND_URL];
+    
+    if (origin && allowedOrigins.includes(origin)) {
+      c.header('Access-Control-Allow-Origin', origin);
+      c.header('Access-Control-Allow-Credentials', 'true');
+      c.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      c.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Cookie');
+    }
+    
+    if (c.req.method === 'OPTIONS') {
+      return new Response(null, { status: 204 });
     }
     
     await next();
   };
 }
 
-export function securityHeadersMiddleware() {
+// Request logging middleware
+export function requestLoggingMiddleware() {
   return async (c: Context, next: Next) => {
+    const start = Date.now();
+    const method = c.req.method;
+    const path = c.req.path;
+    const ip = getClientIp(c);
+    
     await next();
     
-    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    c.header('Content-Security-Policy', "default-src 'self'");
-    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
+    const duration = Date.now() - start;
+    const status = c.res.status;
+    
+    console.log(`${method} ${path} - ${status} - ${duration}ms - IP: ${ip}`);
+  };
+}
+
+// Error handling middleware
+export function errorHandlingMiddleware() {
+  return async (c: Context, next: Next) => {
+    try {
+      await next();
+    } catch (error) {
+      console.error('Unhandled error:', error);
+      
+      const { errorResponse, status } = await handleError(
+        c, 
+        error, 
+        'Internal server error'
+      );
+      
+      return c.json(errorResponse, status);
+    }
+  };
+}
+
+// Composite middleware for auth routes
+export function createAuthCompositeMiddleware(bindingName: string) {
+  return [
+    corsMiddleware(),
+    securityHeadersMiddleware(),
+    requestLoggingMiddleware(),
+    errorHandlingMiddleware(),
+    createRateLimitMiddleware(),
+    createAuthMiddleware(bindingName)
+  ];
+}
+
+// Route-specific middleware combinations
+export const middlewarePresets = {
+  public: [
+    corsMiddleware(),
+    securityHeadersMiddleware(),
+    requestLoggingMiddleware(),
+    createRateLimitMiddleware()
+  ],
+  
+  authenticated: (bindingName: string) => [
+    ...middlewarePresets.public,
+    createAuthMiddleware(bindingName)
+  ],
+  
+  adminOnly: (bindingName: string) => [
+    ...middlewarePresets.authenticated(bindingName),
+    (c: Context, next: Next) => {
+      requireAdmin(c);
+      return next();
+    }
+  ]
+};
+
+// Helper to apply multiple middleware
+export function applyMiddleware(...middlewares: Function[]) {
+  return async (c: Context, next: Next) => {
+    let index = -1;
+    
+    async function dispatch(i: number): Promise<void> {
+      if (i <= index) throw new Error('next() called multiple times');
+      index = i;
+      
+      if (i === middlewares.length) {
+        return await next();
+      }
+      
+      const middleware = middlewares[i];
+      return await middleware(c, () => dispatch(i + 1));
+    }
+    
+    return await dispatch(0);
   };
 }

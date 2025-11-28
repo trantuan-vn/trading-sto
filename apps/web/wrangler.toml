@@ -4,7 +4,6 @@ compatibility_date = "2025-03-25"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-NEXT_PUBLIC_DEBUG = "true"
 
 [limits]
 cpu_ms = 300000

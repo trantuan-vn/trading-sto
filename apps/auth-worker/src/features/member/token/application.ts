@@ -6,6 +6,7 @@ import {
   CreateApiToken,
   RevokeApiToken,
 } from './domain';
+import { TOKEN_CONSTANTS, ERROR_MESSAGES } from './constant';
 
 interface ITokenApplicationService {
   // Token Management
@@ -17,15 +18,21 @@ interface ITokenApplicationService {
   validateApiTokenUseCase(clientId: string, token: string): Promise<{ isValid: boolean; token?: any; error?: string; permissions?: string[] }>;
 }
 
-
 export function createTokenApplicationService(c: Context, bindingName: string): ITokenApplicationService {
+  const getTokenService = (identifier: string) => {
+    const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
+    return createApiTokenService(c.env, userDO);
+  };
+
+  const getTokenServiceByClientId = (clientId: string) => {
+    const userDO = getIdFromString(c, clientId, bindingName) as DurableObjectStub<UserDO>;
+    return createApiTokenService(c.env, userDO);
+  };
+
   return {
-    // I. Token Management
     async createApiTokenUseCase(identifier: string, request: CreateApiToken): Promise<{ apiToken: any; rawToken: string; warning?: string }> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const apiTokenService = createApiTokenService(userDO);
-      
-      const result = await apiTokenService.createApiToken(identifier, request);
+      const tokenService = getTokenService(identifier);
+      const result = await tokenService.createApiToken(identifier, request);
       
       const response = {
         apiToken: {
@@ -41,32 +48,28 @@ export function createTokenApplicationService(c: Context, bindingName: string): 
 
       return response;
     },
+
     async getUserApiTokensUseCase(identifier: string): Promise<{ tokens: any[] }> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const apiTokenService = createApiTokenService(userDO);
-      const tokens = await apiTokenService.getUserApiTokens();
+      const tokenService = getTokenService(identifier);
+      const tokens = await tokenService.getUserApiTokens();
       return { tokens };
     },
 
     async revokeApiTokenUseCase(identifier: string, request: RevokeApiToken): Promise<{ success: boolean }> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const apiTokenService = createApiTokenService(userDO);
-      await apiTokenService.revokeApiToken(request.tokenId);
+      const tokenService = getTokenService(identifier);
+      await tokenService.revokeApiToken(request.tokenId);
       return { success: true };
     },
 
     async revokeAllApiTokensUseCase(identifier: string): Promise<{ success: boolean }> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const apiTokenService = createApiTokenService(userDO);
-      await apiTokenService.revokeAllApiTokens();
+      const tokenService = getTokenService(identifier);
+      await tokenService.revokeAllApiTokens();
       return { success: true };
     },
 
-    // II. Token Validation
     async validateApiTokenUseCase(clientId: string, token: string): Promise<{ isValid: boolean; token?: any; error?: string; permissions?: string[] }> {
-      const userDO = getIdFromString<UserDO>(c, clientId, bindingName);
-      const apiTokenService = createApiTokenService(userDO);      
-      return await apiTokenService.validateApiToken(token);
+      const tokenService = getTokenServiceByClientId(clientId);
+      return await tokenService.validateApiToken(token);
     }
   };
 }

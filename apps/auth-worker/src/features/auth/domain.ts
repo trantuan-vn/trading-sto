@@ -1,40 +1,44 @@
-
 import { z } from 'zod';
 import { SiweMessage } from 'siwe';
 
+// I. JWT Types
+export interface JwtPayload {
+  sub: string;
+  identifier?: string;
+  exp?: number;
+  iat?: number;
+  type?: string;
+}
 
-// II. EMAIL/PHONE
-
+// II. OTP Schemas
 export const OTPRequestSchema = z.object({
-  identifier: z.string(), // email or phone number
+  identifier: z.string().min(1, 'Identifier is required'),
 });
 
 export const OTPVerificationSchema = z.object({
-  identifier: z.string(),
-  otp: z.string().length(6),
+  identifier: z.string().min(1, 'Identifier is required'),
+  otp: z.string().length(6, 'OTP must be 6 digits'),
 });
-
 
 export type OTPRequest = z.infer<typeof OTPRequestSchema>;
 export type OTPVerification = z.infer<typeof OTPVerificationSchema>;
 
-// III.WALLET
-
+// III. Wallet Schemas
 export const SIWEAuthSchema = z.object({
-  message: z.string(),
-  signature: z.string(),
+  message: z.string().min(1, 'Message is required'),
+  signature: z.string().min(1, 'Signature is required'),
 });
 
 export type SIWEAuth = z.infer<typeof SIWEAuthSchema>;
 
-// IV. OAUTH
-export interface OAuthConfig {
-  clientId: string;
-  clientSecret: string;
-  tokenEndpoint: string;
-  userInfoEndpoint: string;
-  redirectUri: string;
-}
+// IV. OAuth Schemas and Types
+export const OAuthConfigSchema = z.object({
+  clientId: z.string(),
+  clientSecret: z.string(),
+  tokenEndpoint: z.string().url(),
+  userInfoEndpoint: z.string().url(),
+  redirectUri: z.string().url(),
+});
 
 export const OAuthCallbackSchema = z.object({
   code: z.string(),
@@ -52,6 +56,7 @@ export const OAuthTokenResponseSchema = z.object({
   scope: z.string().optional(),
 });
 
+// Provider-specific user info schemas
 export const GoogleUserInfoSchema = z.object({
   sub: z.string(),
   email: z.string().email(),
@@ -96,8 +101,9 @@ export const OAuthProviderDataSchema = z.object({
   profile: z.record(z.any()).optional(),
 });
 
-// Type exports
+// OAuth Type Exports
 export type OAuthProvider = "google" | "apple" | "facebook" | "github" | "twitter";
+export type OAuthConfig = z.infer<typeof OAuthConfigSchema>;
 export type OAuthProviderData = z.infer<typeof OAuthProviderDataSchema>;
 export type OAuthCallback = z.infer<typeof OAuthCallbackSchema>;
 export type OAuthTokenResponse = z.infer<typeof OAuthTokenResponseSchema>;
@@ -107,49 +113,53 @@ export type FacebookUserInfo = z.infer<typeof FacebookUserInfoSchema>;
 export type GitHubUserInfo = z.infer<typeof GitHubUserInfoSchema>;
 export type TwitterUserInfo = z.infer<typeof TwitterUserInfoSchema>;
 
-// V. USER
-
-// Base schemas
+// V. User Schemas
 export const BaseUserSchema = z.object({
-  identifier: z.string(), 
+  identifier: z.string(),
   role: z.enum(['member', 'admin']).default('member'),
 });
 
-export type BaseUser = z.infer<typeof BaseUserSchema>;
-
-// User Schema
 export const UserSchema = BaseUserSchema.extend({
   address: z.string().optional(),
-  email: z.string().optional(),
+  email: z.string().email().optional(),
   phone: z.string().optional(),
   privateKey: z.string().optional(),
   mnemonicPhrase: z.string().optional(),
 });
 
+export type BaseUser = z.infer<typeof BaseUserSchema>;
 export type User = z.infer<typeof UserSchema>;
 
-// Session Schema
+// VI. Session Schemas
 export const SessionSchema = z.object({
   hashSessionId: z.string(),
-  type: z.enum(['otp', 'siwe', 'oauth']), 
+  type: z.enum(['otp', 'siwe', 'oauth']),
   token: z.string().optional(),
   refreshToken: z.string().optional(),
-  expiresAt: z.string(),
-  ipAddress: z.string().optional(),
+  expiresAt: z.string().datetime(),
+  ipAddress: z.string().ip().optional(),
   userAgent: z.string().optional(),
   isActive: z.boolean().default(true),
 });
 
 export type Session = z.infer<typeof SessionSchema>;
 
-// VI. INTERFACE
-
+// VII. Repository Interfaces
 export interface IUserRepository {
   get(): Promise<any>;
-  save(user: User): Promise<any>;
+  save(user: any): Promise<any>;
   delete(): Promise<void>;
 }
 
+export interface ISessionRepository {
+  create(sessionData: Session): Promise<void>;
+  findById(sessionId: string): Promise<any>;
+  update(sessionId: string, sessionData: Partial<Session>): Promise<void>;
+  delete(sessionId: string): Promise<void>;
+  deactivateAllUserSessions(identifier: string): Promise<void>;
+}
+
+// VIII. Service Interfaces
 export interface IOTPService {
   generateOTP(sessionId: string): Promise<string>;
   verifyOTP(otp: string, sessionId: string): Promise<boolean>;
@@ -159,18 +169,38 @@ export interface IOTPService {
 
 export interface IWalletService {
   generateNonceAndStore(sessionId: string): Promise<string>;
-  verifySignature(sessionId: string, address: string, signature: string ): Promise<SiweMessage>;
+  verifySignature(sessionId: string, message: string, signature: string, expectedDomain?: string, expectedOrigin?: string): Promise<SiweMessage>;
 }
 
 export interface IOAuthService {
   generateState(sessionId: string): Promise<string>;
-  exchangeOAuthCode(provider: string, sessionId: string, state: string, code: string ): Promise<OAuthTokenResponse>;
+  exchangeOAuthCode(provider: string, sessionId: string, state: string, code: string): Promise<OAuthTokenResponse>;
   getUserInfoFromProvider(provider: string, accessToken: string): Promise<any>;
 }
 
 export interface IKvService {
   saveNonce(sessionId: string, nonce: string): Promise<void>;
-  validateNonce(sessionId: string, nonce: string): Promise<boolean>
+  validateNonce(sessionId: string, nonce: string): Promise<boolean>;
 }
 
+// IX. Response Types
+export interface AuthResponse {
+  ok: boolean;
+  token?: string;
+  refreshToken?: string;
+  user?: User;
+  error?: string;
+}
 
+export interface OTPResponse {
+  ok: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface WalletResponse {
+  ok: boolean;
+  nonce?: string;
+  user?: User;
+  error?: string;
+}

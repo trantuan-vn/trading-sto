@@ -2,6 +2,7 @@ import { Context } from 'hono';
 import { getIdFromName } from '../../../shared/utils';
 import { UserDO } from '../../ws/infrastructure/UserDO';
 import { createVNPayService, createCryptoService } from './infrastructure';
+import { paymentUtils, cryptoUtils } from './utils';
 
 import { 
   CreatePaymentSchema,
@@ -17,6 +18,7 @@ import {
   RefundResult
 } from './domain';
 import { config } from './config';
+import { PAYMENT_ERROR_MESSAGES } from './constant';
 
 interface IPaymentApplicationService {
   createPaymentUrlUseCase(identifier: string, request: CreatePayment, ipAddr: string): Promise<string>;
@@ -29,9 +31,26 @@ interface IPaymentApplicationService {
 export function createPaymentApplicationService(c: Context, bindingName: string): IPaymentApplicationService {
   const cryptoService = createCryptoService();
 
+  const validateAndParseParams = (params: any) => {
+    const secretKey = config.get('vnp_HashSecret');
+    const secureHash = params.vnp_SecureHash;
+
+    const paramsWithoutHash = { ...params } as any;
+    delete paramsWithoutHash.vnp_SecureHash;
+    delete paramsWithoutHash.vnp_SecureHashType;
+
+    const isValid = cryptoService.validateSignature(paramsWithoutHash, secretKey, secureHash);      
+    if (!isValid) {
+      throw new Error(PAYMENT_ERROR_MESSAGES.CHECKSUM_FAILED);
+    }
+
+    const { identifier, paymentId } = paymentUtils.parsePaymentReference(params.vnp_TxnRef);
+    return { identifier, paymentId, validatedParams: VNPayReturnSchema.parse(params) };
+  };
+
   return {
     async createPaymentUrlUseCase(identifier: string, request: CreatePayment, ipAddr: string): Promise<string> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
       const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = CreatePaymentSchema.parse(request);
@@ -39,62 +58,33 @@ export function createPaymentApplicationService(c: Context, bindingName: string)
     },
 
     async processReturnUseCase(params: any): Promise<PaymentResult> {
+      const { identifier, paymentId, validatedParams } = validateAndParseParams(params);
 
-      const {identifier, paymentId } = params.vnp_TxnRef.split('&');
-      if (!identifier || !paymentId) {
-        throw new Error('Invalid identifier or paymentId');
-      }
-
-      const secretKey = config.get('vnp_HashSecret');
-      const secureHash = params.vnp_SecureHash;
-
-      const paramsWithoutHash = { ...params } as any;
-      delete paramsWithoutHash.vnp_SecureHash;
-      delete paramsWithoutHash.vnp_SecureHashType;
-
-      const isValid = cryptoService.validateSignature(paramsWithoutHash, secretKey, secureHash);      
-      if (!isValid) {
-        throw new Error('Checksum failed');
-      }
-
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
       const vnpayService = createVNPayService(userDO);
-      const validatedParams = VNPayReturnSchema.parse(params);    
+      
       return await vnpayService.processReturn(paymentId, validatedParams);
-
     },
 
     async processIPNUseCase(params: any): Promise<PaymentResult> {
-      const {identifier, paymentId } = params.vnp_TxnRef.split('&');
-      if (!identifier || !paymentId) {
-        throw new Error('Invalid identifier or paymentId');
-      }
+      try {
+        const { identifier, paymentId, validatedParams } = validateAndParseParams(params);
 
-      const secretKey = config.get('vnp_HashSecret');
-      const secureHash = params.vnp_SecureHash;
-
-      const paramsWithoutHash = { ...params } as any;
-      delete paramsWithoutHash.vnp_SecureHash;
-      delete paramsWithoutHash.vnp_SecureHashType;
-
-      const isValid = cryptoService.validateSignature(paramsWithoutHash, secretKey, secureHash);      
-      if (!isValid) {
+        const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
+        const vnpayService = createVNPayService(userDO);
+        
+        return await vnpayService.processIPN(paymentId, validatedParams);
+      } catch (error) {
         return {
           success: false,
           code: '97',
-          message: 'Checksum failed',  
-        };        
+          message: PAYMENT_ERROR_MESSAGES.CHECKSUM_FAILED,  
+        };
       }
-
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
-      const vnpayService = createVNPayService(userDO);
-      
-      const validatedParams = VNPayIPNSchema.parse(params);
-      return await vnpayService.processIPN(paymentId, validatedParams);
     },
 
     async queryTransactionUseCase(identifier: string, request: PaymentQuery, ipAddr: string): Promise<QueryDRResult> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
       const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = PaymentQuerySchema.parse(request);
@@ -102,7 +92,7 @@ export function createPaymentApplicationService(c: Context, bindingName: string)
     },
 
     async refundTransactionUseCase(identifier: string, request: RefundRequest, ipAddr: string): Promise<RefundResult> {
-      const userDO = getIdFromName<UserDO>(c, identifier, bindingName);
+      const userDO = getIdFromName(c, identifier, bindingName) as DurableObjectStub<UserDO>;
       const vnpayService = createVNPayService(userDO);
       
       const validatedRequest = RefundSchema.parse(request);

@@ -1,0 +1,295 @@
+1. Khởi tạo và Đăng ký Table
+
+typescript
+// Khởi tạo database
+const database = new UserDODatabase(storage, currentUserId, broadcastCallback);
+
+// Đăng ký các table với schema và options
+database.registerTable('user_registrations', UserRegistrationSchema, {
+  userScoped: true,
+  autoFields: { id: true, timestamps: true, user: true },
+  indexes: ['userId', 'isActive', 'shardName'],
+  conflictField: 'userId'
+});
+
+database.registerTable('shard_performances', ShardPerformanceSchema, {
+  autoFields: { id: true, timestamps: true },
+  indexes: ['shardName', 'timestamp'],
+  conflictField: 'shardName'
+});
+
+database.registerTable('cleanup_operations', CleanupOperationSchema, {
+  autoFields: { id: true, timestamps: true },
+  indexes: ['shardName', 'status', 'timestamp']
+});
+2. Sử dụng Dynamic Operations - Register User
+
+typescript
+// Cách 1: Sử dụng dynamicUpsert đơn giản
+async registerUserSimple(userId: string) {
+  const userData = await database.dynamicUpsert('user_registrations', {
+    userId,
+    shardName: this.getShardName(),
+    tags: ['new_user'],
+    priority: 'normal',
+    isActive: true
+  });
+
+  return userData;
+}
+
+// Cách 2: Sử dụng multi-table transaction
+async registerUserAdvanced(userId: string) {
+  const operations = [
+    {
+      table: 'user_registrations',
+      operation: 'upsert' as const,
+      data: {
+        userId,
+        shardName: this.getShardName(),
+        isActive: true,
+        priority: 'high'
+      }
+    },
+    {
+      table: 'shard_performances',
+      operation: 'upsert' as const,
+      data: {
+        shardName: this.getShardName(),
+        totalUsers: await this.getCurrentUserCount() + 1,
+        activeUsers: await this.getActiveUserCount() + 1,
+        userGrowthRate: 0.1
+      }
+    }
+  ];
+
+  const results = await database.dynamicMultiTableTransaction(operations);
+  return results[0]; // Return user registration data
+}
+3. Batch Operations - Đăng ký nhiều users
+
+typescript
+async batchRegisterUsers(userIds: string[]) {
+  const userDataArray = userIds.map(userId => ({
+    userId,
+    shardName: this.getShardName(),
+    isActive: true,
+    priority: 'normal',
+    tags: ['batch_registered']
+  }));
+
+  // Insert batch users
+  const registeredUsers = await database.dynamicBatchInsert(
+    'user_registrations', 
+    userDataArray
+  );
+
+  // Update metrics
+  await database.dynamicUpsert('shard_performances', {
+    shardName: this.getShardName(),
+    totalUsers: await this.getCurrentUserCount() + userIds.length,
+    activeUsers: await this.getActiveUserCount() + userIds.length,
+    batchesProcessed: (await this.getBatchCount()) + 1
+  });
+
+  return registeredUsers;
+}
+4. Query Data với Dynamic Select
+
+typescript
+// Lấy danh sách users active
+async getActiveUsers(): Promise<string[]> {
+  const users = await database.dynamicSelect('user_registrations', 
+    { field: 'isActive', operator: '=', value: 1 }, // Boolean được convert thành 1/0
+    { field: 'created_at', direction: 'DESC' }
+  );
+  
+  return users.map(user => user.userId);
+}
+
+// Lấy performance metrics của shard
+async getShardPerformance(): Promise<any> {
+  const metrics = await database.dynamicSelect('shard_performances',
+    { field: 'shardName', operator: '=', value: this.getShardName() },
+    { field: 'timestamp', direction: 'DESC' },
+    1 // LIMIT 1
+  );
+  
+  return metrics[0] || null;
+}
+
+// Tìm user cụ thể
+async findUser(userId: string) {
+  const users = await database.dynamicSelect('user_registrations',
+    { field: 'userId', operator: '=', value: userId }
+  );
+  
+  return users[0] || null;
+}
+5. Update Operations
+
+typescript
+// Deactivate user
+async deactivateUser(userId: string) {
+  const user = await this.findUser(userId);
+  if (!user) throw new Error('User not found');
+
+  await database.dynamicUpdate('user_registrations', user.id, {
+    isActive: false,
+    priority: 'inactive'
+  });
+
+  // Update metrics
+  await database.dynamicUpsert('shard_performances', {
+    shardName: this.getShardName(),
+    activeUsers: Math.max(0, (await this.getActiveUserCount()) - 1)
+  });
+}
+
+// Update user tags
+async updateUserTags(userId: string, newTags: string[]) {
+  const user = await this.findUser(userId);
+  if (!user) throw new Error('User not found');
+
+  await database.dynamicUpdate('user_registrations', user.id, {
+    tags: newTags,
+    updated_at: Date.now() // Auto-generated nhưng có thể override
+  });
+}
+6. Complex Multi-Table Operations
+
+typescript
+// Cleanup operation với logging
+async performCleanup(inactiveUserIds: string[]) {
+  const operations = [];
+
+  // 1. Deactivate users
+  for (const userId of inactiveUserIds) {
+    const user = await this.findUser(userId);
+    if (user) {
+      operations.push({
+        table: 'user_registrations',
+        operation: 'update' as const,
+        id: user.id,
+        data: { isActive: false }
+      });
+    }
+  }
+
+  // 2. Log cleanup operation
+  operations.push({
+    table: 'cleanup_operations',
+    operation: 'insert' as const,
+    data: {
+      shardName: this.getShardName(),
+      usersProcessed: inactiveUserIds.length,
+      status: 'completed',
+      timestamp: Date.now()
+    }
+  });
+
+  // 3. Update performance metrics
+  operations.push({
+    table: 'shard_performances',
+    operation: 'upsert' as const,
+    data: {
+      shardName: this.getShardName(),
+      activeUsers: await this.getActiveUserCount(),
+      batchesProcessed: (await this.getBatchCount()) + 1
+    }
+  });
+
+  const results = await database.dynamicMultiTableTransaction(operations);
+  return results;
+}
+7. Sử dụng kết hợp với Generic Table (Backward Compatibility)
+
+typescript
+// Vẫn có thể sử dụng generic table như cũ
+async hybridApproach() {
+  const userRegistrations = database.table(
+    'user_registrations', 
+    UserRegistrationSchema, 
+    { userScoped: true }
+  );
+
+  // Sử dụng generic table methods
+  const activeUsers = await userRegistrations
+    .where('isActive', '==', true)
+    .orderBy('created_at', 'desc')
+    .get();
+
+  // Kết hợp với dynamic operations
+  const performanceData = await database.dynamicSelect('shard_performances',
+    { field: 'shardName', operator: '=', value: this.getShardName() }
+  );
+
+  return { activeUsers, performanceData };
+}
+8. Error Handling và Validation
+
+typescript
+async safeUserRegistration(userData: any) {
+  try {
+    const result = await database.dynamicUpsert('user_registrations', userData);
+    
+    console.log('✅ User registered successfully:', result.userId);
+    return { success: true, data: result };
+    
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      console.error('❌ Validation failed:', error.errors);
+      return { 
+        success: false, 
+        error: 'INVALID_DATA',
+        details: error.errors 
+      };
+    }
+    
+    console.error('❌ Database error:', error);
+    return { 
+      success: false, 
+      error: 'DATABASE_ERROR',
+      details: String(error)
+    };
+  }
+}
+9. Utility Methods
+
+typescript
+// Get all tables
+console.log('Registered tables:', database.getRegisteredTables());
+
+// Get table config
+const userTableConfig = database.getTableConfig('user_registrations');
+console.log('User table config:', userTableConfig);
+
+// Manual transaction với dynamic operations
+async function customTransaction() {
+  const ops = [
+    DynamicSchemaManager.createInsertOperation('user_registrations', {
+      id: crypto.randomUUID(),
+      userId: 'user123',
+      shardName: 'shard-1',
+      isActive: true,
+      created_at: Date.now(),
+      updated_at: Date.now()
+    }, UserRegistrationSchema),
+    
+    DynamicSchemaManager.createUpsertOperation('shard_performances', {
+      shardName: 'shard-1',
+      totalUsers: 100,
+      activeUsers: 95
+    }, 'shardName', ShardPerformanceSchema)
+  ];
+
+  await database.execTransaction(ops);
+}
+Ưu điểm khi sử dụng:
+
+Code ngắn gọn hơn: Giảm 60-70% code so với cách cũ
+Type-safe: Vẫn có autocomplete và type checking
+Linh hoạt: Dễ dàng thêm table mới chỉ với config
+Performance: Batch operations giảm round trips
+Maintainable: Logic tập trung, dễ bảo trì
+Consistent: Auto-handling timestamps, IDs, data transformation
