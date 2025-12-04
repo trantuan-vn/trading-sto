@@ -1,5 +1,6 @@
 import { Context } from 'hono'
 import CryptoJS from 'crypto-js';
+import { UserDO } from '../features/ws/infrastructure/UserDO';
 
 export const handleError = async (c: Context, e: any, defaultMessage: string) => {
   try {
@@ -158,42 +159,164 @@ export const getClientIp = (c: any): string => {
   return c.req.raw.headers.get('CF-Connecting-IP') || c.req.raw.headers.get('X-Real-IP') || c.req.raw.headers.get('X-Forwarded-For');
 };
 
-// utils/featureLoader.ts
-type FeatureMethods = { [key: string]: Function };
+export const executeUtils = {
+  /**
+   * Execute dynamic database operations
+   */
+  async executeDynamicAction(userDO: DurableObjectStub<UserDO>, operation: string, data: any, table?: string): Promise<any> {
+    let endpoint = '';
+    let requestData: any = {};
 
-export class FeatureLoader {
-  private features: Map<string, FeatureMethods> = new Map();
+    // Xác định endpoint và dữ liệu dựa trên operation
+    switch (operation) {
+      case 'insert':
+        endpoint = '/dynamic/insert';
+        requestData = { table, data };
+        break;
+        
+      case 'update':
+        endpoint = '/dynamic/update';
+        requestData = { table, id: data.id, data };
+        break;
+        
+      case 'upsert':
+        endpoint = '/dynamic/upsert';
+        requestData = { table, data, conflictField: data.conflictField };
+        break;
+        
+      case 'delete':
+        endpoint = '/dynamic/delete';
+        requestData = { table, id: data.id, where: data.where };
+        break;
+        
+      case 'select':
+        endpoint = '/dynamic/select';
+        requestData = { 
+          table, 
+          where: data.where, 
+          orderBy: data.orderBy, 
+          limit: data.limit 
+        };
+        break;
+        
+      case 'batch-insert':
+        endpoint = '/dynamic/batch-insert';
+        requestData = { table, data };
+        break;
+        
+      case 'multi-table':
+        endpoint = '/dynamic/multi-table';
+        requestData = { operations: data.operations };
+        break;
+        
+      default:
+        throw new Error(`Unsupported dynamic operation: ${operation}`);
+    }
 
-  // Đăng ký feature mới
-  registerFeature(featureName: string, methods: FeatureMethods): void {
-    console.log(`📦 FeatureLoader: Đăng ký feature '${featureName}' với ${Object.keys(methods).length} methods`);
-    this.features.set(featureName, methods);
-  }
-
-  // Áp dụng tất cả features vào class
-  applyToClass(targetClass: any, context: any): void {
-    console.log('🔧 FeatureLoader: Áp dụng features vào class...');
+    const response = await userDO.fetch(`https://user.do${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestData)
+    });
     
-    this.features.forEach((methods, featureName) => {
-      Object.entries(methods).forEach(([methodName, method]) => {
-        if (typeof method === 'function') {
-          // Bind method với context và đăng ký vào class
-          targetClass.prototype[methodName] = method.bind(context);
-          console.log(`   ✅ Thêm method: ${methodName} từ feature ${featureName}`);
-        }
-      });
-    });
-  }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to execute dynamic ${operation}: ${errorText}`);
+    }
+    
+    const result = await response.json() as any;
+    if (!result.success){
+      throw new Error(result.error);
+    }
+    return result.data;
 
-  // Lấy tất cả methods (cho TypeScript types)
-  getAllMethods(): string[] {
-    const methods: string[] = [];
-    this.features.forEach(featureMethods => {
-      methods.push(...Object.keys(featureMethods));
-    });
-    return methods;
-  }
-}
+  },
 
-// Global feature loader instance
-export const featureLoader = new FeatureLoader();
+  /**
+   * Execute database transaction
+   */
+  async executeTransaction(userDO: DurableObjectStub<UserDO>, operations: Array<{sql: string, params: any[]}>): Promise<void>{
+    const response = await userDO.fetch('http://user.internal/repository/transaction', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ operations })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to execute transaction: ${errorText}`);
+    }
+    
+    const result = await response.json() as any;
+    if (!result.success){
+      throw new Error(result.error);
+    }
+  },
+
+  async executeRepositorySelect(userDO: DurableObjectStub<UserDO>, sql: string, params: any[] = []): Promise<any[]> {
+    const response = await userDO.fetch('http://user.internal/repository/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql, params })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to execute query: ${response.statusText}`);
+    }
+    
+    const result = await response.json() as any;
+    if (!result.success){
+      throw new Error(result.error);
+    }
+    return result.data;
+  },
+
+};
+// Ví dụ sử dụng:
+/*
+// INSERT
+await executeDynamicAction(userDO, 'insert', sessionData, 'sessions');
+
+// UPDATE
+await executeDynamicAction(userDO, 'update', { id: '123', isActive: true }, 'sessions');
+
+// UPSERT
+await executeDynamicAction(userDO, 'upsert', 
+  { email: 'test@example.com', name: 'Test User' }, 
+  'users'
+);
+
+// DELETE
+await executeDynamicAction(userDO, 'delete', { id: '123' }, 'users');
+
+// SELECT với điều kiện
+await executeDynamicAction(userDO, 'select', {
+  where: { field: 'status', operator: '==', value: 'active' },
+  orderBy: { field: 'createdAt', direction: 'DESC' },
+  limit: 10
+}, 'users');
+
+// BATCH INSERT
+await executeDynamicAction(userDO, 'batch-insert', [
+  { name: 'User1', email: 'user1@test.com' },
+  { name: 'User2', email: 'user2@test.com' }
+], 'users');
+
+// MULTI-TABLE TRANSACTION
+await executeDynamicAction(userDO, 'multi-table', {
+  operations: [
+    {
+      table: 'users',
+      operation: 'insert',
+      data: { name: 'John', email: 'john@test.com' }
+    },
+    {
+      table: 'orders', 
+      operation: 'insert',
+      data: { userId: '123', amount: 100 }
+    }
+  ]
+});
+*/

@@ -116,7 +116,6 @@ export class UserShardDO extends DurableObject {
         const result = await this.database.execSelectSQL(data.sql, data.params || []);
         return new Response(JSON.stringify(result), { headers: { 'Content-Type': 'application/json' } });
       },
-      '/repository/action': () => this.handleRepositoryAction(data)
     };
 
     if (operations[path]) {
@@ -125,38 +124,6 @@ export class UserShardDO extends DurableObject {
     }
     
     return new Response('Not found', { status: 404 });
-  }
-
-  private async handleRepositoryAction(data: any): Promise<Response> {
-    const { table, operation, data: opData } = data;
-    const tableInstance = this.database.getTable(table);
-    if (!tableInstance) return new Response(`Table ${table} not found`, { status: 404 });
-
-    const operations: Record<string, Function> = {
-      get: () => tableInstance.findById(opData.id),
-      getAll: () => tableInstance.getAll(),
-      insert: () => tableInstance.create(opData),
-      update: () => tableInstance.update(opData.id, opData),
-      delete: () => tableInstance.delete(opData.id),
-      create: () => tableInstance.create(opData),
-      findById: () => tableInstance.findById(opData.id),
-      count: () => tableInstance.count(),
-      where: () => tableInstance.where(opData.path, opData.operator, opData.value).get(),
-      orderBy: () => tableInstance.orderBy(opData.field, opData.direction).get(),
-      limit: () => tableInstance.limit(opData.count).get(),
-      first: () => tableInstance.limit(1).first(),
-      broadcast: () => { 
-        tableInstance.broadcastToUser(opData.event, opData.broadcastData);  
-        return { success: true, message: 'Broadcast sent' };
-      }
-    };
-
-    if (!operations[operation]) {
-      return new Response(`Invalid operation: ${operation}`, { status: 400 });
-    }
-
-    const result = await operations[operation]();
-    return new Response(JSON.stringify(result));
   }
 
   // =============================================

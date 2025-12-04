@@ -13,27 +13,13 @@ import { toBase64, safeJsonParse, calculateConfidence,
   calculateFaceDetectionConfidence, calculateFaceVerificationConfidence } from './utils';
 import { getDocumentPrompt } from './domain';
 import { UserDO } from '../../ws/infrastructure/UserDO';
-
+import { executeUtils } from '../../../shared/utils';
 export function createAIService(env: Env, userDO: DurableObjectStub<UserDO>): IAIDocumentService {
-  // Helper methods  
-  const executeServiceSelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
 
   const validateServiceUsage = async (endpoint: string): Promise<any> => {
-    const service = await executeServiceSelect(
-      'select * from services where endpoint = ? and is_active = ?',
-      [endpoint, true]
+    const service = await executeUtils.executeRepositorySelect(userDO,
+      'select * from services where endpoint = ? and isActive = ?',
+      [endpoint, 1]
     ).then(results => results[0]);
 
     if (!service) {
@@ -51,33 +37,32 @@ export function createAIService(env: Env, userDO: DurableObjectStub<UserDO>): IA
     endpoint: string, 
     request: any
   ): Promise<void> => {
-    const transactionResponse = await userDO.fetch('http://user.internal/dynamic/multi-table', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operations: [
-          {
-            table: 'services',
-            operation: 'update',
-            id: service.id,
-            data: {
-              currentCalls: service.currentCalls + 1,
+    const transactionResponse = 
+      await executeUtils.executeDynamicAction
+        (
+          userDO, 
+          'multi-table', 
+          [
+            {
+              table: 'services',
+              operation: 'update',
+              id: service.id,
+              data: {
+                currentCalls: service.currentCalls + 1,
+              }
+            },
+            {
+              table: 'service_usages',
+              operation: 'insert',
+              data: {
+                serviceId: service.id,
+                endpoint: endpoint,
+                userAgent: request.userAgent,
+                ipAddress: request.ipAddress,
+              }
             }
-          },
-          {
-            table: 'service_usages',
-            operation: 'insert',
-            data: {
-              serviceId: service.id,
-              endpoint: endpoint,
-              timestamp: new Date().toISOString(),
-              userAgent: request.userAgent,
-              ipAddress: request.ipAddress,
-            }
-          }
-        ]
-      })
-    });    
+          ]
+        );
 
     if (!transactionResponse.ok) {
       throw new Error(`Failed to update service usage: ${transactionResponse.statusText}`);

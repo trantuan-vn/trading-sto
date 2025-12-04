@@ -10,7 +10,7 @@ import {
   DEFAULT_SCALE_CONFIGS, ScaleConfig, UserSchema, SessionSchema,
   PricePolicySchema, ServiceSchema, ServiceUsageSchema, VoucherSchema,
   OrderSchema, OrderItemSchema, OrderItemDiscountSchema, ApiTokenSchema,
-  PaymentSchema, RefundSchema, BroadcastValidator
+  PaymentSchema, RefundSchema, BroadcastValidator, VersionInfoSchema
 } from '../domain.js';
 
 const MAX_SEND_FAILURE_COUNT = 3;
@@ -35,20 +35,88 @@ export class UserDO extends DurableObject {
     this.database = new UserDODatabase(this.storage, this.state.id.toString(), this.broadcast.bind(this));
     
     this.state.blockConcurrencyWhile(async () => {
-      this.connections = this.table('connections', ConnectionSchema, { userScoped: true });
-      this.pendingMessages = this.table('pending_messages', PendingMessageSchema, { userScoped: true });
-      this.subscriptions = this.table('subscriptions', SubscriptionSchema, { userScoped: true });
+      this.connections = this.table('connections', ConnectionSchema,
+                    { 
+                      userScoped: true, 
+                      uniqueIndexes: ['sessionId, connected'],
+                      conflictField: 'sessionId, connected', 
+                      autoFields: { id: true, timestamps: true, user: true} 
+                    });
+      this.pendingMessages = this.table('pending_messages', PendingMessageSchema,
+                    { 
+                      userScoped: true, 
+                      autoFields: { id: true, timestamps: true, user: true} 
+                    });
+      this.subscriptions = this.table('subscriptions', SubscriptionSchema,
+                    { 
+                      userScoped: true, 
+                      uniqueIndexes: ['channel, isActive'],
+                      conflictField: 'channel, isActive', 
+                      autoFields: { id: true, timestamps: true, user: true} 
+                    });
       
       // Initialize common tables
-      [PricePolicySchema, ServiceSchema, VoucherSchema].forEach((schema, i) => 
-        this.table(['price_policies','services','vouchers'][i], schema));
+      this.table('price_policies', PricePolicySchema,{ 
+                      userScoped: true, 
+                      autoFields: { id: true, timestamps: true, user: true} 
+                    });
+
+      this.table('services', ServiceSchema, 
+        { 
+          userScoped: true, 
+          uniqueIndexes: ['endpoint, status'],
+          conflictField: 'endpoint, status', 
+          autoFields: { id: true, timestamps: true, user: true} 
+        }
+      );       
+      this.table('vouchers', VoucherSchema, 
+        { 
+          userScoped: true, 
+          uniqueIndexes: ['code, status'],
+          conflictField: 'code, status', 
+          autoFields: { id: true, timestamps: true, user: true} 
+        }
+      );             
       // Initialize user tables
-      [UserSchema, SessionSchema, 
-       ServiceUsageSchema, OrderSchema, OrderItemSchema, OrderItemDiscountSchema, 
-       ApiTokenSchema, PaymentSchema, RefundSchema].forEach((schema, i) => 
-        this.table(['users','sessions',
-                   'service_usages','orders','order_items','order_discounts',
-                   'api_tokens','payments','refunds'][i], schema, { userScoped: true }));                   
+      [ServiceUsageSchema, OrderItemSchema, OrderItemDiscountSchema, 
+       ApiTokenSchema, PaymentSchema, RefundSchema, VersionInfoSchema]
+       .forEach((schema, i) => 
+        this.table(['service_usages','order_items','order_discounts',
+                   'api_tokens','payments','refunds', 'versions'][i], schema, 
+                    { 
+                      userScoped: true, 
+                      autoFields: { id: true, timestamps: true, user: true} 
+                    }
+                  )
+      ); 
+
+      this.table('orders', OrderSchema, 
+        { 
+          userScoped: true, 
+          uniqueIndexes: ['orderCode'],
+          conflictField: 'orderCode', 
+          autoFields: { id: true, timestamps: true, user: true} 
+        }
+      );    
+
+      this.table('users', UserSchema, 
+        { 
+          userScoped: true, 
+          uniqueIndexes: ['identifier'],
+          conflictField: 'identifier', 
+          autoFields: { id: true, timestamps: true, user: true} 
+        }
+      );                                      
+
+      // Initialize user-specific tables
+      this.table('sessions', SessionSchema, 
+        { 
+          userScoped: true, 
+          uniqueIndexes: ['hashSessionId'],
+          conflictField: 'hashSessionId', 
+          autoFields: { id: true, timestamps: true, user: true} 
+        }
+      );                                      
     });
   }
 
@@ -89,7 +157,13 @@ export class UserDO extends DurableObject {
       }
     } catch (error) {
       handleErrorWithoutIp(error, `UserDO ${this.userId} fetch error`);
-      return new Response("Internal Server Error", { status: 500 });
+      return new Response(JSON.stringify({ 
+            success: false, 
+            error: 'Internal Server Error' 
+          }), { 
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
     }        
   }
 
@@ -97,147 +171,91 @@ export class UserDO extends DurableObject {
   // DYNAMIC OPERATIONS HANDLERS
   // =============================================
   private async handleDynamicInsert(request: Request): Promise<Response> {
-    try {
-      const { table, data } = await request.json() as { table: string; data: any };
-      const result = await this.database.dynamicInsert(table, data);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic insert error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { table, data } = await request.json() as { table: string; data: any };
+    const result = await this.database.dynamicInsert(table, data);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicUpdate(request: Request): Promise<Response> {
-    try {
-      const { table, id, data } = await request.json() as { table: string; id: string; data: any };
-      const result = await this.database.dynamicUpdate(table, id, data);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic update error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { table, id, data } = await request.json() as { table: string; id: string; data: any };
+    const result = await this.database.dynamicUpdate(table, id, data);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicUpsert(request: Request): Promise<Response> {
-    try {
-      const { table, data, conflictField } = await request.json() as { 
-        table: string; 
-        data: any; 
-        conflictField?: string 
-      };
-      const result = await this.database.dynamicUpsert(table, data, conflictField);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic upsert error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { table, data, conflictField } = await request.json() as { 
+      table: string; 
+      data: any; 
+      conflictField?: string 
+    };
+    const result = await this.database.dynamicUpsert(table, data, conflictField);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicDelete(request: Request): Promise<Response> {
-    try {
-      const { table, id, where } = await request.json() as { 
-        table: string; 
-        id?: string; 
-        where?: { field: string; operator: string; value: any } 
-      };
-      
-      if (id) {
-        await this.database.dynamicDelete(table, id);
-      } else if (where) {
-        await this.database.dynamicDeleteWhere(table, where);
-      } else {
-        throw new Error('Either id or where condition is required');
-      }
-      
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic delete error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
+    const { table, id, where } = await request.json() as { 
+      table: string; 
+      id?: string; 
+      where?: { field: string; operator: string; value: any } 
+    };
+    
+    if (id) {
+      await this.database.dynamicDelete(table, id);
+    } else if (where) {
+      await this.database.dynamicDeleteWhere(table, where);
+    } else {
+      throw new Error('Either id or where condition is required');
     }
+    
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicSelect(request: Request): Promise<Response> {
-    try {
-      const { table, where, orderBy, limit } = await request.json() as {
-        table: string;
-        where?: { field: string; operator: string; value: any };
-        orderBy?: { field: string; direction: 'ASC' | 'DESC' };
-        limit?: number;
-      };
-      
-      const result = await this.database.dynamicSelect(table, where, orderBy, limit);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic select error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { table, where, orderBy, limit } = await request.json() as {
+      table: string;
+      where?: { field: string; operator: string; value: any };
+      orderBy?: { field: string; direction: 'ASC' | 'DESC' };
+      limit?: number;
+    };
+    
+    const result = await this.database.dynamicSelect(table, where, orderBy, limit);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicBatchInsert(request: Request): Promise<Response> {
-    try {
-      const { table, data } = await request.json() as { table: string; data: any[] };
-      const result = await this.database.dynamicBatchInsert(table, data);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic batch insert error for table`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { table, data } = await request.json() as { table: string; data: any[] };
+    const result = await this.database.dynamicBatchInsert(table, data);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleDynamicMultiTable(request: Request): Promise<Response> {
-    try {
-      const { operations } = await request.json() as {
-        operations: Array<{
-          table: string;
-          operation: 'insert' | 'update' | 'upsert' | 'delete';
-          data?: any;
-          id?: string;
-          conflictField?: string;
-          where?: { field: string; operator: string; value: any };
-        }>;
-      };
-      
-      const result = await this.database.dynamicMultiTableTransaction(operations);
-      return new Response(JSON.stringify({ success: true, data: result }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      handleErrorWithoutIp(error, `Dynamic multi-table transaction error`);
-      return new Response(JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }), { status: 400 });
-    }
+    const { operations } = await request.json() as {
+      operations: Array<{
+        table: string;
+        operation: 'insert' | 'update' | 'upsert' | 'delete';
+        data?: any;
+        id?: string;
+        conflictField?: string;
+        where?: { field: string; operator: string; value: any };
+      }>;
+    };
+    
+    const result = await this.database.dynamicMultiTableTransaction(operations);
+    return new Response(JSON.stringify({ success: true, data: result }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   // =============================================
@@ -251,26 +269,14 @@ export class UserDO extends DurableObject {
       return await this.handleRepositoryOperations(request, url.pathname);
     }
 
-    // Dynamic operations via internal endpoint
-    if (url.pathname.startsWith('/dynamic/')) {
-      const path = url.pathname.replace('/dynamic', '');
-      switch (path) {
-        case '/insert': return await this.handleDynamicInsert(request);
-        case '/update': return await this.handleDynamicUpdate(request);
-        case '/upsert': return await this.handleDynamicUpsert(request);
-        case '/delete': return await this.handleDynamicDelete(request);
-        case '/select': return await this.handleDynamicSelect(request);
-        case '/batch-insert': return await this.handleDynamicBatchInsert(request);
-        case '/multi-table': return await this.handleDynamicMultiTable(request);
-      }
-    }
-
     const message = await request.json() as { type: string; [key: string]: any };
     if (message.type === 'broadcast') {
       await this.handleDirectBroadcast(message);
     }
     
-    return new Response(JSON.stringify({ status: 'processed' }));
+    return new Response(JSON.stringify({ success: true, status: 'processed' }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   private async handleRepositoryOperations(request: Request, path: string): Promise<Response> {
@@ -279,53 +285,28 @@ export class UserDO extends DurableObject {
     switch (path) {
       case '/repository/transaction':
         await this.database.execTransaction(data.operations);
-        return new Response('OK');
+        return new Response(JSON.stringify({ success: true }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
         
       case '/repository/select':
         const result = await this.database.execSelectSQL(data.sql, data.params || []);
-        return new Response(JSON.stringify(result), { 
-          headers: { 'Content-Type': 'application/json' } 
-        });
-        
-      case '/repository/action':
-        return await this.handleRepositoryAction(data);
-        
+        return new Response(JSON.stringify({ success: true, data: result }), { 
+            headers: { 'Content-Type': 'application/json' } 
+          });
+                
       default:
-        return new Response('Not found', { status: 404 });
+        return new Response(JSON.stringify({ 
+            success: false, 
+            error: 'Not found' 
+          }), { 
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
     }
   }
 
-  private async handleRepositoryAction(data: any): Promise<Response> {
-    const { table, operation, data: opData } = data;
-    const tableInstance = this.database.getTable(table);
-    if (!tableInstance) return new Response(`Table ${table} not found`, { status: 404 });
 
-    const operations: { [key: string]: Function } = {
-      getUserId: () => this.state.id.toString(),
-      getAll: () => tableInstance.getAll(),
-      insert: () => tableInstance.create(opData),
-      update: () => tableInstance.update(opData.id, opData),
-      delete: () => tableInstance.delete(opData.id),
-      create: () => tableInstance.create(opData),
-      findById: () => tableInstance.findById(opData.id),
-      count: () => tableInstance.count(),
-      where: () => tableInstance.where(opData.path, opData.operator, opData.value).get(),
-      orderBy: () => tableInstance.orderBy(opData.field, opData.direction).get(),
-      limit: () => tableInstance.limit(opData.count).get(),
-      first: () => tableInstance.limit(1).first(),
-      broadcast: () => { 
-        tableInstance.broadcastToUser(opData.event, opData.broadcastData);  
-        return { success: true, message: 'Broadcast sent' };
-      }
-    };
-
-    if (!operations[operation]) {
-      return new Response(`Invalid operation: ${operation}`, { status: 400 });
-    }
-
-    const result = await operations[operation]();
-    return new Response(JSON.stringify(result));
-  }
 
   // =============================================
   // BROADCAST HANDLING
@@ -380,28 +361,50 @@ export class UserDO extends DurableObject {
   // WEBSOCKET HANDLERS
   // =============================================
   private async handleWebSocketUpgrade(request: Request): Promise<Response> {
-    const { ipAddress, userAgent } = getIPAndUserAgent(request);
-    if (!ipAddress || !userAgent) throw new Error('Missing IP or user agent');
-    
-    const sessionId = getSessionIdHash(ipAddress, userAgent, this.env.ENCRYPTION_SECRET);
-    await this.connections.create(ConnectionSchema.parse({
-      connected: true, lastConnected: Date.now(), sessionId
-    }));
+    try {
+      const { ipAddress, userAgent } = getIPAndUserAgent(request);
+      if (!ipAddress || !userAgent) throw new Error('Missing IP or user agent');
+      
+      const sessionId = getSessionIdHash(ipAddress, userAgent, this.env.ENCRYPTION_SECRET);
+      await this.connections.create(ConnectionSchema.parse({
+        connected: true, lastConnected: Date.now(), sessionId
+      }));
 
-    const webSocketPair = new WebSocketPair();
-    const [client, server] = Object.values(webSocketPair);
-    
-    this.ctx.acceptWebSocket(server);
-    this.ctx.waitUntil(Promise.all([this.registerUser(), this.sendPendingMessages(server)]));
+      const webSocketPair = new WebSocketPair();
+      const [client, server] = Object.values(webSocketPair);
+      
+      this.ctx.acceptWebSocket(server);
+      this.ctx.waitUntil(Promise.all([this.registerUser(), this.sendPendingMessages(server)]));
 
-    await this.sendMessage(server, {
-      event: 'connected', message: 'WebSocket connected to UserDO!',
-      timestamp: Date.now(), userId: this.userId
-    });
+      await this.sendMessage(server, {
+        event: 'connected', message: 'WebSocket connected to UserDO!',
+        timestamp: Date.now(), userId: this.userId
+      });
 
-    await this.storage.setAlarm(Date.now() + RETRY_ALARM_INTERVAL);
+      await this.storage.setAlarm(Date.now() + RETRY_ALARM_INTERVAL);
 
-    return new Response(null, { status: 101, webSocket: client });
+      return new Response(null, {
+        status: 101,
+        webSocket: client,
+        headers: new Headers({
+          'X-WebSocket-Status': 'connected',
+          'X-User-ID': this.userId,
+          'X-Session-ID': sessionId
+        })
+      });      
+    } catch (error) {
+      const { errorResponse } = await handleErrorWithoutIp(error, 'WebSocket upgrade error');  
+      return new Response(JSON.stringify({
+        success: false,
+        error: "WebSocket connection failed",
+        code: "WEBSOCKET_UPGRADE_FAILED",
+        details: errorResponse,
+        timestamp: Date.now()
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });      
+    }
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
@@ -620,15 +623,15 @@ export class UserDO extends DurableObject {
       activeConnections: webSockets.length, timestamp: Date.now()
     };
 
-    return new Response(JSON.stringify(status), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify({ success: true, data: status }), {
+        headers: { 'Content-Type': 'application/json' }
+      });  
   }
 
   async getSubscriptionList(): Promise<Response> {
     const subscriptions = await this.getSubscriptions();
-    return new Response(JSON.stringify({ subscriptions }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(JSON.stringify({ success: true, data: { subscriptions } }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
   }
 }

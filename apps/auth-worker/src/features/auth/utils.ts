@@ -4,6 +4,7 @@ import CryptoJS from 'crypto-js';
 import { Context } from 'hono'
 import { setCookie, deleteCookie } from 'hono/cookie'
 
+
 import { 
   OAuthConfig, 
   OAuthProvider, 
@@ -16,15 +17,12 @@ import {
 } from './domain'
 import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
+
 // I. JWT Utilities
 export const jwtUtils = {
-  isTokenExpired(payload: JwtPayload): boolean {
-    if (!payload.exp) return false;
-    return payload.exp < Math.floor(Date.now() / 1000);
-  },
-
   async signJWT(payload: JwtPayload, secret: string): Promise<string> {
-    return await jwt.sign(payload, secret);
+    const token = await jwt.sign(payload, secret);
+    return token;
   },
 
   async verifyJWT(token: string, secret: string): Promise<{
@@ -35,33 +33,32 @@ export const jwtUtils = {
     try {
       // Validate token format first
       if (!token || typeof token !== 'string') {
-        return { ok: false, error: ERROR_MESSAGES.AUTH.INVALID_TOKEN };
+        return { ok: false, error: "token is empty or not a string" };
       }      
-      const isValid = await jwt.verify(token, secret);
-      if (!isValid) {
-        return { ok: false, error: ERROR_MESSAGES.AUTH.INVALID_TOKEN };
+      const jwtData = await jwt.verify(token, secret, { throwError: true });
+      if (!jwtData) {
+        return { ok: false, error: "token verification is failed" };
       }
 
       const decoded = jwt.decode(token);
       if (!decoded?.payload) {
-        return { ok: false, error: ERROR_MESSAGES.AUTH.INVALID_TOKEN };
+        return { ok: false, error: "token payload is empty" };
       }
       // Validate JWT payload structure
       const payload = decoded.payload as JwtPayload;
       if (!payload.sub || !payload.exp || !payload.iat || !payload.type) {
-        return { ok: false, error: ERROR_MESSAGES.AUTH.INVALID_TOKEN };
+        return { ok: false, error: `one of those fields is missing: sub(${payload.sub}), exp(${payload.exp}), iat(${payload.iat}), type(${payload.type})` };
       }
       
-      const isExpired = this.isTokenExpired(decoded.payload as JwtPayload);
-      if (isExpired) {
-        return { ok: false, error: ERROR_MESSAGES.AUTH.SESSION_EXPIRED };
+      if (payload.exp < Math.floor(Date.now() / 1000)) {
+        return { ok: false, error: `token is expired: exp(${new Date(payload.exp * 1000).toISOString()})` };
       }
 
       return { ok: true, payload: decoded.payload as JwtPayload };
     } catch (error) {
       return {
         ok: false,
-        error: error instanceof Error ? error.message : 'Token verification failed'
+        error: error instanceof Error ? error.message : 'token verification failed'
       };
     }
   },
@@ -70,10 +67,10 @@ export const jwtUtils = {
     userId: string, 
     identifier: string, 
     secret: string, 
-    expiresInMinutes: number = AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY
+    expiresInSeconds: number = AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY
   ): Promise<string> {
     const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + expiresInMinutes;
+    const exp = iat + expiresInSeconds;
     return await this.signJWT({
       sub: userId,
       identifier: identifier.toLowerCase(),
@@ -87,10 +84,10 @@ export const jwtUtils = {
     userId: string,
     identifier: string, 
     secret: string,
-    expiresInMinutes: number = AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY
+    expiresInSeconds: number = AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY
   ): Promise<string> {
     const iat = Math.floor(Date.now() / 1000);
-    const exp = iat + expiresInMinutes;
+    const exp = iat + expiresInSeconds;
     
     return await this.signJWT({
       sub: userId,
@@ -126,7 +123,7 @@ export const validationUtils = {
 
   validateSession(session: any, token?: string, refreshToken?: string): void {
     if (!session?.isActive) {
-      throw new Error(ERROR_MESSAGES.AUTH.INVALID_TOKEN);
+      throw new Error(`session is not active: ${JSON.stringify(!session?.isActive)}`);
     }
     
     if (new Date(session.expiresAt) < new Date()) {
@@ -134,11 +131,11 @@ export const validationUtils = {
     }
     
     if (token && session.token !== token) {
-      throw new Error(ERROR_MESSAGES.AUTH.INVALID_TOKEN);
+      throw new Error(`token is not same as session in DB: ${token} !== ${session.token}`);
     }
     
     if (refreshToken && session.refreshToken !== refreshToken) {
-      throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
+      throw new Error(`refreshToken is not same as session in DB: ${refreshToken} !== ${session.refreshToken}`);
     }
   }
 };
@@ -211,9 +208,10 @@ export const cookieUtils = {
     deleteCookie(c, 'sessionId', cookieOptions);
   },
 
-  setAuthCookies(c: Context, token: string, refreshToken: string) {
+  setAuthCookies(c: Context, sessionId: string, token: string, refreshToken: string) {
     this.setCookieWithOption(c, 'token', token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
     this.setCookieWithOption(c, 'refreshToken', refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+    this.setCookieWithOption(c, 'sessionId', sessionId, AUTH_CONSTANTS.SESSION_EXPIRY);
   }
 };
 
@@ -304,3 +302,4 @@ export const oauthUtils = {
     }
   }
 };
+

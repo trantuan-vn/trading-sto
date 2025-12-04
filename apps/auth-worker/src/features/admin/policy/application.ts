@@ -3,8 +3,7 @@ import { getIdFromName } from '../../../shared/utils';
 import { UserDO } from '../../ws/infrastructure/UserDO';
 import { createPriceInfrastructureService } from './infrastructure';
 import {
-  ServicePriceCalculationRequest,
-  UserPriceCalculationRequest,
+  PriceCalculationRequest,
   PricePolicy,
 } from './domain';
 
@@ -14,8 +13,8 @@ interface IPriceApplicationService {
   getPricePolicies(identifier: string, limit: number, offset: number, status?: string): Promise<PricePolicy[]>;
   getPricePolicy(identifier: string, policyId: string): Promise<PricePolicy>;
   deletePricePolicy(identifier: string, policyId: string): Promise<void>;
-  calculateServicePrice(identifier: string, request: ServicePriceCalculationRequest): Promise<any>;
-  calculateUserPrice(identifier: string, request: UserPriceCalculationRequest): Promise<any>;
+  calculateServicePrice(identifier: string, request: PriceCalculationRequest): Promise<any>;
+  calculateUserPrice(identifier: string, request: PriceCalculationRequest): Promise<any>;
   updatePolicyStatus(identifier: string, policyId: string, status: string): Promise<PricePolicy>;
 }
 export function createPriceApplicationService(c: Context, bindingName: string): IPriceApplicationService {
@@ -51,12 +50,12 @@ export function createPriceApplicationService(c: Context, bindingName: string): 
       await priceInfra.deletePricePolicy(policyId);
     },
 
-    async calculateServicePrice(identifier: string, request: ServicePriceCalculationRequest): Promise<any> {
+    async calculateServicePrice(identifier: string, request: PriceCalculationRequest): Promise<any> {
       const priceInfra = getPriceInfrastructure(identifier);
       return await priceInfra.calculateServicePrice(request);
     },
 
-    async calculateUserPrice(identifier: string, request: UserPriceCalculationRequest): Promise<any> {
+    async calculateUserPrice(identifier: string, request: PriceCalculationRequest): Promise<any> {
       const priceInfra = getPriceInfrastructure(identifier);
       return await priceInfra.calculateUserPrice(request);
     },

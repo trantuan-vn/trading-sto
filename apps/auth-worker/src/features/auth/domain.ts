@@ -4,10 +4,10 @@ import { SiweMessage } from 'siwe';
 // I. JWT Types
 export interface JwtPayload {
   sub: string;
-  identifier?: string;
-  exp?: number;
-  iat?: number;
-  type?: string;
+  identifier: string;
+  exp: number;
+  iat: number;
+  type: string;
 }
 
 // II. OTP Schemas
@@ -139,7 +139,16 @@ export const SessionSchema = z.object({
   expiresAt: z.string().datetime(),
   ipAddress: z.string().ip().optional(),
   userAgent: z.string().optional(),
-  isActive: z.boolean().default(true),
+  isActive: z.preprocess(
+    (val) => {
+      // Chuyển đổi các giá trị thành boolean
+      if (val === 1 || val === '1' || val === 'true') return true;
+      if (val === 0 || val === '0' || val === 'false') return false;
+      // Giữ nguyên nếu đã là boolean hoặc undefined/null
+      return val;
+    },
+    z.boolean().default(true)
+  ),
 });
 
 export type Session = z.infer<typeof SessionSchema>;
@@ -152,7 +161,7 @@ export interface IUserRepository {
 }
 
 export interface ISessionRepository {
-  create(sessionData: Session): Promise<void>;
+  create(sessionData: Session): Promise<any>;
   findById(sessionId: string): Promise<any>;
   update(sessionId: string, sessionData: Partial<Session>): Promise<void>;
   delete(sessionId: string): Promise<void>;

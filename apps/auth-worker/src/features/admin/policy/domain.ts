@@ -26,17 +26,7 @@ export const PricePolicySchema = z.object({
   endDate: z.string().optional(),
 });
 
-export const ServicePriceCalculationRequestSchema = z.object({
-  basePrice: z.number().min(0),
-  serviceId: z.string(),
-  serviceName: z.string().optional(),
-  currentCalls: z.number().min(0).optional(),
-  maxCalls: z.number().min(0).optional(),
-  quantity: z.number().min(1).optional().default(1),
-  currency: z.string().optional().default('VND'),
-});
-
-export const UserPriceCalculationRequestSchema = z.object({
+export const PriceCalculationRequestSchema = z.object({
   basePrice: z.number().min(0),
   userId: z.string(),
   userRole: z.enum(['member', 'admin']).optional(),
@@ -51,8 +41,7 @@ export const PolicyIdSchema = z.string().uuid(); // hoặc regex phù hợp
 export const StatusSchema = z.enum(['ACTIVE', 'INACTIVE']);
 // Types
 export type PricePolicy = z.infer<typeof PricePolicySchema>;
-export type ServicePriceCalculationRequest = z.infer<typeof ServicePriceCalculationRequestSchema>;
-export type UserPriceCalculationRequest = z.infer<typeof UserPriceCalculationRequestSchema>;
+export type PriceCalculationRequest = z.infer<typeof PriceCalculationRequestSchema>;
 
 // Domain Interfaces
 export interface IPriceInfrastructureService {
@@ -61,8 +50,8 @@ export interface IPriceInfrastructureService {
   getPricePolicies(limit: number, offset: number, status?: string): Promise<any[]>;
   getPricePolicy(policyId: string): Promise<any>;
   deletePricePolicy(policyId: string): Promise<void>;
-  calculateServicePrice(request: ServicePriceCalculationRequest): Promise<any>;
-  calculateUserPrice(request: UserPriceCalculationRequest): Promise<any>;
+  calculateServicePrice(request: Partial<PriceCalculationRequest>): Promise<any>;
+  calculateUserPrice(request: Partial<PriceCalculationRequest>): Promise<any>;
   updatePolicyStatus(policyId: string, status: string): Promise<any>;
 }
 

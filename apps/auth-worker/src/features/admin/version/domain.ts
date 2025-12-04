@@ -47,7 +47,7 @@ export type VersionListResponse = z.infer<typeof VersionListResponseSchema>;
 // Domain Interfaces
 export interface IVersionInfrastructureService {
   saveNewVersion(): Promise<VersionSaveResponse>;
-  getCurrentVersion(): Promise<VersionInfo>;
+  upgradeVersion(): Promise<VersionInfo>;
   getVersionData(versionId: string): Promise<VersionData>;
   getVersionList(): Promise<VersionListResponse>;
 }

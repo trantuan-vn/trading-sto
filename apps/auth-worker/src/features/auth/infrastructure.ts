@@ -16,31 +16,19 @@ import {
   GitHubUserInfoSchema, 
   TwitterUserInfoSchema,
   Session, 
-  SessionSchema 
+  SessionSchema, 
+  ISessionRepository
 } from './domain';
 import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 import { oauthUtils, otpUtils } from './utils';
 
-// Base repository operations
-const executeRepositoryAction = async (userDO: DurableObjectStub<UserDO>, operation: string, data: any, table: string): Promise<any> => {
-  const response = await userDO.fetch('http://user.internal/repository/action', {
-    method: 'POST',
-    body: JSON.stringify({ table, operation, data })
-  });
-  
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-  }
-  
-  return await response.json();
-};
+import { executeUtils } from '../../shared/utils';
 
 // User Repository Implementation
 const createUserRepository = (userDO: DurableObjectStub<UserDO>): IUserRepository => ({
   async get(): Promise<any> {
-    const user = await executeRepositoryAction(userDO, 'first', {}, 'users');
-    return user || null;
+    const user = await executeUtils.executeRepositorySelect(userDO, 'select * from users');
+    return user[0] || null;
   },
 
   async save(user: any): Promise<any> {
@@ -48,58 +36,66 @@ const createUserRepository = (userDO: DurableObjectStub<UserDO>): IUserRepositor
     const existingUser = await this.get();
     
     const operation = existingUser ? 'update' : 'create';
-    const payload = existingUser 
-      ? { id: existingUser.id, ...validationResult }
-      : validationResult;
+    const payload = existingUser? {
+                                    ...validationResult,
+                                    id: existingUser.id
+                                  }
+                                : validationResult
     
-    return await executeRepositoryAction(userDO, operation, payload, 'users');
+    return await executeUtils.executeDynamicAction(userDO, operation, payload, 'users');
   },
 
   async delete(): Promise<void> {
     const user = await this.get();
     if (!user) return;
 
-    await executeRepositoryAction(userDO, 'delete', { id: user.id }, 'users');
+    await executeUtils.executeDynamicAction(userDO, 'delete', { id: user.id }, 'users');
   },
 });
 
 // Session Repository Implementation
-const createSessionRepository = (userDO: DurableObjectStub<UserDO>) => ({
-  async create(sessionData: Session): Promise<void> {
+const createSessionRepository = (userDO: DurableObjectStub<UserDO>): ISessionRepository => ({
+  async create(sessionData: Session): Promise<any> {
     const validSession = SessionSchema.parse(sessionData);
-    await executeRepositoryAction(userDO, 'create', validSession, 'sessions');
+    return await executeUtils.executeDynamicAction(userDO, 'upsert', validSession, 'sessions');
   },
 
   async findById(sessionId: string): Promise<any> {
-    const session = await executeRepositoryAction(userDO, 'findById', { id: sessionId }, 'sessions');
-    return session || null;
+    const session = await executeUtils.executeRepositorySelect(userDO,
+        'select * from sessions where hashSessionId = ? and isActive = ?',
+        [sessionId, 1]
+      );    
+    return session[0] || null;
   },
 
   async update(sessionId: string, sessionData: Partial<Session>): Promise<void> {
-    await executeRepositoryAction(userDO, 'update', { id: sessionId, data: sessionData }, 'sessions');
+    const session = await this.findById(sessionId);
+    if (!session) {
+      throw new Error(ERROR_MESSAGES.AUTH.SESSION_NOT_FOUND);
+    }    
+    const updatedData = {
+      id: session.id,
+      ...sessionData
+    };
+    await executeUtils.executeDynamicAction(userDO, 'update', updatedData, 'sessions');
+
   },
 
   async delete(sessionId: string): Promise<void> {
-    await executeRepositoryAction(userDO, 'delete', { id: sessionId }, 'sessions');
+    const session = await this.findById(sessionId);
+    if (!session) {
+      throw new Error(ERROR_MESSAGES.AUTH.SESSION_NOT_FOUND);
+    }    
+    await executeUtils.executeDynamicAction(userDO, 'delete', { id: session.id }, 'sessions');
   },
 
   async deactivateAllUserSessions(identifier: string): Promise<void> {
-    const response = await userDO.fetch('http://user.internal/repository/transaction', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        operations: [
-          {
-            sql: 'UPDATE sessions SET isActive = false WHERE user_id IN (SELECT id FROM users WHERE identifier = ?)',
-            params: [identifier]
-          }
-        ]
-      })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to deactivate sessions: ${response.statusText}`);
-    }
+    await executeUtils.executeTransaction(userDO, [
+      {
+        sql: 'UPDATE sessions SET isActive = 0 WHERE user_id IN (SELECT user_id FROM users WHERE identifier = ?)',
+        params: [identifier]
+      }
+    ]);
   },
 });
 
@@ -175,63 +171,59 @@ export function createOTPService(env: Env): IOTPService {
     });
 
     if (!response.ok) {
-      console.error("Failed to send email OTP:", await response.text());
+      throw new Error(`Failed to send email OTP: ${await response.text()}`);
     }
   };
 
   const sendSMS = async (phone: string, otp: string, provider: string): Promise<void> => {
-    try {
-      let response: Response | null = null;
+    let response: Response | null = null;
 
-      switch (provider.toUpperCase()) {
-        case "TWILIO": {
-          const smsData = new URLSearchParams({
-            To: phone,
-            From: env.SMS_FROM_NUMBER,
-            Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-          });
+    switch (provider.toUpperCase()) {
+      case "TWILIO": {
+        const smsData = new URLSearchParams({
+          To: phone,
+          From: env.SMS_FROM_NUMBER,
+          Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+        });
 
-          const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
-          response = await fetch(
-            `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,
-            {
-              method: "POST",
-              headers: {
-                "Authorization": `Basic ${auth}`,
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: smsData.toString(),
-            }
-          );
-          break;
-        }
-        case "VONAGE": {
-          const smsData = new URLSearchParams({
-            from: env.SMS_FROM_NUMBER,
-            to: phone,
-            text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
-          });
-
-          const auth = btoa(`${env.VONAGE_API_KEY}:${env.VONAGE_API_SECRET}`);
-          response = await fetch("https://rest.nexmo.com/sms/json", {
+        const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
+        response = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,
+          {
             method: "POST",
             headers: {
               "Authorization": `Basic ${auth}`,
               "Content-Type": "application/x-www-form-urlencoded",
             },
             body: smsData.toString(),
-          });
-          break;
-        }
-        default:
-          throw new Error(`Unsupported provider: ${provider}`);
+          }
+        );
+        break;
       }
+      case "VONAGE": {
+        const smsData = new URLSearchParams({
+          from: env.SMS_FROM_NUMBER,
+          to: phone,
+          text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
+        });
 
-      if (response && !response.ok) {
-        console.error(`Failed to send SMS OTP via ${provider}:`, await response.text());
+        const auth = btoa(`${env.VONAGE_API_KEY}:${env.VONAGE_API_SECRET}`);
+        response = await fetch("https://rest.nexmo.com/sms/json", {
+          method: "POST",
+          headers: {
+            "Authorization": `Basic ${auth}`,
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: smsData.toString(),
+        });
+        break;
       }
-    } catch (error) {
-      console.error(`Error sending SMS OTP via ${provider}:`, error);
+      default:
+        throw new Error(`Unsupported provider: ${provider}`);
+    }
+
+    if (response && !response.ok) {
+      throw new Error(`Failed to send SMS OTP via ${provider}: ${await response.text()}`);
     }
   };
 

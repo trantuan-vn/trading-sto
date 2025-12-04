@@ -5,41 +5,12 @@ import {
   IPermissionService,
   ApiToken,
   CreateApiToken,
-  ApiTokenSchema,
 } from './domain';
-import { TOKEN_CONSTANTS, DEFAULT_PERMISSIONS, ERROR_MESSAGES } from './constant';
+import { DEFAULT_PERMISSIONS, ERROR_MESSAGES } from './constant';
 import { tokenGenerationUtils } from './utils';
 
+import { executeUtils } from '../../../shared/utils';
 export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>): IApiTokenService {
-  
-  const executeRepositoryAction = async (operation: string, data: any, table: string = 'api_tokens'): Promise<any> => {
-    const response = await userDO.fetch('http://user.internal/repository/action', {
-      method: 'POST',
-      body: JSON.stringify({ table, operation, data })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-    }
-    
-    return await response.json();
-  };
-
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
-
   // -----------------------------------------------------------------------------
   // Token Generator Implementation
   // -----------------------------------------------------------------------------
@@ -81,16 +52,6 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
   };
 
   // Helper methods
-  const validateTokenActive = (token: any): void => {
-    if (!token.isActive) {
-      throw new Error('Token is inactive');
-    }
-    
-    if (token.expiresAt && new Date(token.expiresAt) < new Date()) {
-      throw new Error(ERROR_MESSAGES.TOKEN.TOKEN_EXPIRED);
-    }
-  };
-
   const mergePermissions = (defaultPerms: string[], customPerms?: string[]): string[] => {
     if (!customPerms || customPerms.length === 0) {
       return defaultPerms;
@@ -128,7 +89,7 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
       isActive: true,
     };
 
-    const createdToken = await executeRepositoryAction('create', apiToken);
+    const createdToken = await executeUtils.executeDynamicAction(userDO, 'create', apiToken);
     
     return { 
       apiToken: createdToken, 
@@ -137,69 +98,42 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
   };
 
   const getUserTokens = async (): Promise<any[]> => {
-    const tokens = await executeRepositorySelect(
-      'SELECT * FROM api_tokens WHERE is_active = ? ORDER BY created_at DESC',
-      [true]
+    const tokens = await executeUtils.executeRepositorySelect(userDO,
+      'SELECT * FROM api_tokens WHERE isActive = ? ORDER BY created_at DESC',
+      [1]
     );
     
     return sanitizeTokenForResponse(tokens);
   };
 
-  const revokeToken = async (tokenId: string): Promise<void> => {
-    const token = await executeRepositoryAction('findById', { id: tokenId });
-    
-    if (!token) {
-      throw new Error(ERROR_MESSAGES.TOKEN.TOKEN_NOT_FOUND);
-    }
-    
-    await executeRepositoryAction('update', { 
+  const revokeToken = async (tokenId: string): Promise<void> => {    
+    await executeUtils.executeDynamicAction(userDO, 'update', { 
       id: tokenId, 
       data: { isActive: false } 
     });
   };
 
   const revokeAllTokens = async (): Promise<void> => {
-    const tokens = await executeRepositorySelect(
-      'SELECT id FROM api_tokens WHERE is_active = ?',
-      [true]
-    );
-    
-    for (const token of tokens) {
-      await executeRepositoryAction('update', { 
-        id: token.id, 
-        data: { isActive: false } 
-      });
-    }
+    await executeUtils.executeTransaction(userDO, [
+      {
+        sql: 'UPDATE api_tokens SET isActive = 0',
+        params: []
+      }
+    ]);
   };
 
-  const validateToken = async (token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }> => {
-    const tokenGenerator = createTokenGenerator();
-    
-    const allTokens = await executeRepositorySelect(
-      'SELECT * FROM api_tokens WHERE is_active = ?',
-      [true]
+  const validateToken = async (token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }> => {    
+    const allTokens = await executeUtils.executeRepositorySelect(userDO,
+      'SELECT * FROM api_tokens WHERE isActive = ? and expiresAt >= ? and tokenHash = ?',
+      [1, new Date().toISOString(), tokenGenerationUtils.hashToken(token, env.JWT_SECRET)]
     );
-
-    for (const apiToken of allTokens) {
-      const isValid = await tokenGenerator.verifyToken(token, apiToken.tokenHash);
-      
-      if (isValid) {
-        try {
-          validateTokenActive(apiToken);
-          return { isValid: true, token: apiToken };
-        } catch (error) {
-          return { 
-            isValid: false, 
-            error: error instanceof Error ? error.message : ERROR_MESSAGES.TOKEN.INVALID_TOKEN 
-          };
-        }
-      }
+    if (allTokens.length === 0) {
+      return { 
+        isValid: false, 
+        error: ERROR_MESSAGES.TOKEN.INVALID_TOKEN 
+      };
     }
-    
-    return { 
-      isValid: false, 
-      error: ERROR_MESSAGES.TOKEN.INVALID_TOKEN 
-    };
+    return { isValid: true, token: allTokens[0] };
   };
 
   return {

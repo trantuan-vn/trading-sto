@@ -11,7 +11,8 @@ export const ERROR_MESSAGES = {
     RATE_LIMIT_EXCEEDED: 'Too many requests',
     USER_NOT_FOUND: 'User not found',
     OAUTH_FAILED: 'OAuth authentication failed',
-    WALLET_CONNECTION_FAILED: 'Wallet connection failed'
+    WALLET_CONNECTION_FAILED: 'Wallet connection failed',
+    SESSION_NOT_FOUND: 'Session not found'
   }
 } as const;
 

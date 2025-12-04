@@ -93,7 +93,7 @@ export function createAuthRoutes(bindingName: string) {
       sessionId, identifier, ipAddress, userAgent
     );
 
-    cookieUtils.setAuthCookies(c, token, refreshToken);
+    cookieUtils.setAuthCookies(c, sessionId, token, refreshToken);
     return c.redirect(c.env.FRONTEND_URL);
   }, "OAuth callback failed", true));
 
@@ -115,7 +115,7 @@ export function createAuthRoutes(bindingName: string) {
       identifier, sessionId, otp, ipAddress, userAgent
     );
 
-    cookieUtils.setAuthCookies(c, token, refreshToken);
+    cookieUtils.setAuthCookies(c, sessionId, token, refreshToken);
     return c.json({ ok: true });
   }, "OTP verification failed", true));
 
@@ -138,7 +138,7 @@ export function createAuthRoutes(bindingName: string) {
       sessionId, address, ipAddress, userAgent
     );
 
-    cookieUtils.setAuthCookies(c, token, refreshToken);
+    cookieUtils.setAuthCookies(c, sessionId, token, refreshToken);
     return c.json({ ok: true });
   }, "Wallet connection failed", true));
 

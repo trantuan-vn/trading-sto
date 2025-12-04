@@ -66,7 +66,8 @@
 		"pattern": "api.unitoken.trade",
 		"custom_domain": true
 		}
-	]	
+	],	
 	// "assets": { "directory": "./public/", "binding": "ASSETS" }
 	// "services": [{ "binding": "MY_SERVICE", "service": "my-service" }]
+	// ========== LOGGING CONFIGURATION ==========
 }

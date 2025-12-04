@@ -4,32 +4,24 @@ import {
   VersionInfo,
   VersionData,
   VersionListResponse,
-  IVersionInfrastructureService,
+  IVersionInfrastructureService, VersionInfoSchema
 } from './domain';
+
+import { executeUtils } from '../../../shared/utils';
+const executeRepositoryAction = executeUtils.executeRepositoryAction;
+const executeRepositorySelect = executeUtils.executeRepositorySelect;
+const executeDynamicAction = executeUtils.executeDynamicAction;
 
 export function createVersionInfrastructureService(env: Env, userDO: DurableObjectStub<UserDO>): IVersionInfrastructureService {
   
   // Helper method để lấy dữ liệu từ Durable Object
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
 
   // Helper để lấy tất cả dữ liệu từ các bảng
   const fetchAllTableData = async () => {
     const [pricePolicies, services, vouchers] = await Promise.all([
-      executeRepositorySelect('SELECT * FROM price_policies ORDER BY created_at DESC'),
-      executeRepositorySelect('SELECT * FROM services ORDER BY created_at DESC'),
-      executeRepositorySelect('SELECT * FROM vouchers ORDER BY created_at DESC')
+      executeRepositorySelect(userDO, 'SELECT * FROM price_policies ORDER BY created_at DESC'),
+      executeRepositorySelect(userDO, 'SELECT * FROM services ORDER BY created_at DESC'),
+      executeRepositorySelect(userDO, 'SELECT * FROM vouchers ORDER BY created_at DESC')
     ]);
 
     return { pricePolicies, services, vouchers };
@@ -56,17 +48,6 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
     );
   };
 
-  // Helper để lưu version metadata vào KV
-  const saveVersionMetadata = async (version: string, data: any, recordCounts: any): Promise<void> => {
-    const versionMetadata = {
-      version,
-      timestamp: data.timestamp,
-      dataSize: JSON.stringify(data).length,
-      recordCounts
-    };
-    
-    await env.NONCE_KV.put(`version:metadata-${version}`, JSON.stringify(versionMetadata));
-  };
 
   return {
     async saveNewVersion(): Promise<VersionSaveResponse> {
@@ -92,10 +73,14 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
       };
 
       // Lưu vào R2 và KV
-      await Promise.all([
-        saveVersionToR2(newVersion, versionData),
-        saveVersionMetadata(newVersion, versionData, recordCounts)
-      ]);
+      await saveVersionToR2(newVersion, versionData);
+
+      const version = VersionInfoSchema.parse({
+        version: newVersion,
+        timestamp: versionData.timestamp,
+        recordCounts
+      });
+      await executeRepositoryAction(userDO, 'create', version, 'versions');
 
       return {
         version: newVersion,
@@ -104,35 +89,93 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
       };
     },
 
-    async getCurrentVersion(): Promise<VersionInfo> {
+    async upgradeVersion(): Promise<VersionInfo> {
       const version = await getCurrentVersionNumber();
       
-      // Lấy metadata từ KV
-      const metadata = await env.NONCE_KV.get(`version:metadata-${version}`);
+      const versions = await executeRepositorySelect(
+        userDO, 
+        'SELECT version FROM versions where version = (select max(version) from versions)'
+      );
       
-      if (metadata) {
-        const metadataObj = JSON.parse(metadata);
-        return {
-          version,
-          timestamp: metadataObj.timestamp,
-          recordCounts: metadataObj.recordCounts
-        };
+      if (versions.length > 0 && (versions[0].version !== version)) {
+        const object = await env.R2_VERSION_BUCKET.get(`version-${version}.json`);
+        
+        if (object) {
+          const data = await object.text();
+          const versionData = JSON.parse(data);
+          
+          // Tạo operations cho multi-table
+          const operations = [];
+          
+          // Xử lý price_policies
+          if (versionData.price_policies && Array.isArray(versionData.price_policies)) {
+            // Thêm lệnh delete trước khi insert
+            operations.push({
+              table: 'price_policies',
+              operation: 'delete',
+              data: {} // Có thể thêm điều kiện nếu cần
+            });
+            
+            // Thêm operations insert cho price_policies
+            versionData.price_policies.forEach( (policy : any) => {
+              operations.push({
+                table: 'price_policies',
+                operation: 'insert',
+                data: policy
+              });
+            });
+          }
+          
+          // Xử lý services
+          if (versionData.services && Array.isArray(versionData.services)) {
+            // Thêm lệnh delete trước khi insert
+            operations.push({
+              table: 'services',
+              operation: 'delete',
+              data: {} // Có thể thêm điều kiện nếu cần
+            });
+            
+            // Thêm operations insert cho services
+            versionData.services.forEach( (service : any) => {
+              operations.push({
+                table: 'services',
+                operation: 'insert',
+                data: service
+              });
+            });
+          }
+          
+          // Xử lý vouchers
+          if (versionData.vouchers && Array.isArray(versionData.vouchers)) {
+            // Thêm lệnh delete trước khi insert
+            operations.push({
+              table: 'vouchers',
+              operation: 'delete',
+              data: {} // Có thể thêm điều kiện nếu cần
+            });
+            
+            // Thêm operations insert cho vouchers
+            versionData.vouchers.forEach( (voucher : any) => {
+              operations.push({
+                table: 'vouchers',
+                operation: 'insert',
+                data: voucher
+              });
+            });
+          }
+          
+          // Thực hiện multi-table operations nếu có
+          if (operations.length > 0) {
+            await executeDynamicAction(userDO, 'multi-table', {
+              operations: operations
+            });            
+          }
+        }
       }
-
-      // Fallback: lấy từ R2 nếu không có metadata
-      const object = await env.R2_VERSION_BUCKET.get(`version-${version}.json`);
-      if (object) {
-        const data = await object.text();
-        const versionData = JSON.parse(data);
-        return {
-          version,
-          timestamp: versionData.timestamp
-        };
-      }
-
+      
       return { version };
     },
-
+    
     async getVersionData(versionId: string): Promise<VersionData> {
       const object = await env.R2_VERSION_BUCKET.get(`version-${versionId}.json`);
       
@@ -155,42 +198,7 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
     },
 
     async getVersionList(): Promise<VersionListResponse> {
-      const objects = await env.R2_VERSION_BUCKET.list();
-      
-      const versions: VersionInfo[] = await Promise.all(
-        objects.objects.map(async (object) => {
-          const versionId = object.key.replace('version-', '').replace('.json', '');
-          
-          // Ưu tiên lấy metadata từ KV
-          const metadata = await env.NONCE_KV.get(`version:metadata-${versionId}`);
-          
-          if (metadata) {
-            const metadataObj = JSON.parse(metadata);
-            return {
-              version: versionId,
-              timestamp: metadataObj.timestamp,
-              recordCounts: metadataObj.recordCounts
-            };
-          }
-
-          // Fallback: lấy từ R2
-          const r2Object = await env.R2_VERSION_BUCKET.get(object.key);
-          if (r2Object) {
-            const data = await r2Object.text();
-            const versionData = JSON.parse(data);
-            return {
-              version: versionId,
-              timestamp: versionData.timestamp
-            };
-          }
-
-          return { version: versionId };
-        })
-      );
-
-      // Sort by version number descending
-      versions.sort((a, b) => parseInt(b.version) - parseInt(a.version));
-
+      const versions = await executeRepositorySelect(userDO, 'SELECT * FROM versions ORDER BY version DESC');
       return {
         versions,
         total: versions.length

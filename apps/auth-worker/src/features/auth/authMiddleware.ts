@@ -2,7 +2,7 @@ import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { createApplicationService } from './application';
 import { cookieUtils } from './utils';
-import { handleError, getClientIp } from '../../shared/utils';
+import { handleError, getClientIp, handleErrorWithoutIp } from '../../shared/utils';
 import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
 // Main authentication middleware factory
@@ -18,13 +18,12 @@ export function createAuthMiddleware(bindingName: string) {
       
       // If no refresh token, clear cookies and continue
       if (!refreshToken) {
-        cookieUtils.clearAuthCookies(c);
-        return await next();
+        throw new Error("refreshToken not found");
       }
       
       await processAuthentication(c, bindingName, sessionId, token, refreshToken);
     } catch (error) {
-      console.error('Auth middleware error:', error);
+      handleErrorWithoutIp(error, "Auth middleware error");
       cookieUtils.clearAuthCookies(c);
     }
     
@@ -42,17 +41,12 @@ async function processAuthentication(
 ): Promise<void> {
   const applicationService = createApplicationService(c, bindingName);
   
-  try {
-    if (!token) {
-      // Token missing, try to refresh
-      await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
-    } else {
-      // Token exists, verify it
-      await handleTokenVerification(c, applicationService, sessionId, token, refreshToken);
-    }
-  } catch (error) {
-    console.error('Authentication process failed:', error);
-    throw error;
+  if (!token) {
+    // Token missing, try to refresh
+    await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
+  } else {
+    // Token exists, verify it
+    await handleTokenVerification(c, applicationService, sessionId, token, refreshToken);
   }
 }
 
@@ -64,23 +58,15 @@ async function handleTokenRefresh(
   refreshToken: string
 ): Promise<void> {
   if (!sessionId) {
-    cookieUtils.clearAuthCookies(c);
-    return;
+    throw new Error("sessionId is missing");
   }
-  
-  try {
-    const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
-    if (result.ok) {
-      cookieUtils.setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-      cookieUtils.setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
-      c.set('user', result.user);
-    } else {
-      throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
-    }
-  } catch (error) {
-    console.error('Token refresh failed:', error);
-    cookieUtils.clearAuthCookies(c);
-    throw error;
+  const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
+  if (result.ok) {
+    cookieUtils.setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+    cookieUtils.setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+    c.set('user', result.user);
+  } else {
+    throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
   }
 }
 
@@ -93,7 +79,7 @@ async function handleTokenVerification(
   refreshToken: string
 ): Promise<void> {
   if (!sessionId) {
-    throw new Error(ERROR_MESSAGES.AUTH.SESSION_EXPIRED);
+    throw new Error("sessionId is missing");
   }
   
   try {
@@ -105,8 +91,7 @@ async function handleTokenVerification(
       await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
     }
   } catch (error) {
-    console.error('Token verification failed:', error);
-    // Try to refresh token on verification failure
+    handleErrorWithoutIp(error, "Token verification error");
     await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
   }
 }
@@ -158,13 +143,13 @@ export function createRateLimitMiddleware() {
           await c.env.NONCE_KV.delete(`rate_limit:${ip}`);
         }
       }
-      
-      await next();
-      
+
     } catch (error) {
-      console.error('Rate limit middleware error:', error);
-      await next();
+      handleErrorWithoutIp(error, "Rate limit middleware error");
     }
+
+    await next();
+
   };
 }
 
@@ -257,14 +242,13 @@ export function errorHandlingMiddleware() {
     try {
       await next();
     } catch (error) {
-      console.error('Unhandled error:', error);
-      
+      // Handle error
       const { errorResponse, status } = await handleError(
         c, 
         error, 
         'Internal server error'
       );
-      
+      // Send error response
       return c.json(errorResponse, status);
     }
   };

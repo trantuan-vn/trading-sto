@@ -1,43 +1,13 @@
 import { UserDO } from '../../ws/infrastructure/UserDO';
 import {
   PricePolicy,
-  ServicePriceCalculationRequest,
-  UserPriceCalculationRequest,
+  PriceCalculationRequest,
   IPriceInfrastructureService,
 } from './domain';
-
+import { executeUtils } from '../../../shared/utils';
 export function createPriceInfrastructureService(userDO: DurableObjectStub<UserDO>): IPriceInfrastructureService {
-  
-  const executeRepositoryAction = async (operation: string, data: any, table: string = 'price_policies'): Promise<any> => {
-    const response = await userDO.fetch('http://user.internal/repository/action', {
-      method: 'POST',
-      body: JSON.stringify({ table, operation, data })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-    }
-    
-    return await response.json();
-  };
-
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
-
   // Helper methods
-  const isPolicyApplicable = (policy: any, request: ServicePriceCalculationRequest | UserPriceCalculationRequest): boolean => {
+  const isPolicyApplicable = (policy: any, request: PriceCalculationRequest): boolean => {
     const conditions = policy.conditions || {};
     const now = new Date();
 
@@ -82,7 +52,7 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
     return true;
   };
 
-  const calculateDiscount = (policy: any, currentPrice: number, request: ServicePriceCalculationRequest | UserPriceCalculationRequest): number => {
+  const calculateDiscount = (policy: any, currentPrice: number, request: PriceCalculationRequest): number => {
     switch (policy.type) {
       case 'PERCENTAGE':
         return currentPrice * (policy.value / 100);
@@ -119,7 +89,7 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
       : applicableTier.value;
   };
 
-  const calculateUsageBasedDiscount = (policy: any, request: ServicePriceCalculationRequest | UserPriceCalculationRequest): number => {
+  const calculateUsageBasedDiscount = (policy: any, request: PriceCalculationRequest): number => {
     if (!('currentCalls' in request)) return 0;
     
     const conditions = policy.conditions || {};
@@ -133,8 +103,8 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
     return 0;
   };
 
-  const calculatePrice = async (request: ServicePriceCalculationRequest | UserPriceCalculationRequest, targetType: 'SERVICE' | 'USER') => {
-    const activePolicies = await executeRepositorySelect(
+  const calculatePrice = async (request: PriceCalculationRequest, targetType: 'SERVICE' | 'USER') => {
+    const activePolicies = await executeUtils.executeRepositorySelect(userDO,
       'select * from price_policies where status = ? and target_type = ? order by priority desc',
       ['ACTIVE', targetType]
     );
@@ -165,39 +135,42 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
       appliedPolicies,
       currency: request.currency || 'VND',
       [targetType === 'SERVICE' ? 'serviceId' : 'userId']: targetType === 'SERVICE' 
-        ? (request as ServicePriceCalculationRequest).serviceId 
-        : (request as UserPriceCalculationRequest).userId
+        ? request.serviceId 
+        : request.userId
     };
   };
 
   return {
-    createPricePolicy: (request: PricePolicy) => 
-      executeRepositoryAction('create', { ...request, status: 'ACTIVE' }),
+    createPricePolicy: (request: Partial<PricePolicy>) => 
+      executeUtils.executeDynamicAction(userDO, 'create', request, 'price_policies'),
 
-    updatePricePolicy: (policyId: string, request: PricePolicy) => 
-      executeRepositoryAction('update', { id: policyId, ...request }),
+    updatePricePolicy: (policyId: string, request: Partial<PricePolicy>) => 
+      executeUtils.executeDynamicAction(userDO, 'update', { id: policyId, ...request }, 'price_policies'),
 
     getPricePolicies: (limit: number, offset: number, status?: string) => 
-      executeRepositorySelect(
-        status 
-          ? 'select * from price_policies where status = ? order by priority desc limit ? offset ?'
-          : 'select * from price_policies order by priority desc limit ? offset ?',
+      executeUtils.executeRepositorySelect(
+        userDO,
+        `select * from price_policies ${status ? 'where status = ?' : ''} order by priority desc limit ? offset ?`,
         status ? [status, limit, offset] : [limit, offset]
       ),
 
     getPricePolicy: (policyId: string) => 
-      executeRepositoryAction('findById', { id: policyId }),
+      executeUtils.executeRepositorySelect(
+        userDO,
+        `select * from price_policies where id = ?`,
+        [policyId]
+      ),
 
     deletePricePolicy: (policyId: string) => 
-      executeRepositoryAction('delete', { id: policyId }),
+      executeUtils.executeDynamicAction(userDO, 'delete', { id: policyId }, 'price_policies'),
 
     updatePolicyStatus: (policyId: string, status: string) => 
-      executeRepositoryAction('update', { id: policyId, data: { status } }),
+      executeUtils.executeDynamicAction(userDO, 'update', { id: policyId, status: status}, 'price_policies'),
 
-    calculateServicePrice: (request: ServicePriceCalculationRequest) => 
+    calculateServicePrice: (request: PriceCalculationRequest) => 
       calculatePrice(request, 'SERVICE'),
 
-    calculateUserPrice: (request: UserPriceCalculationRequest) => 
+    calculateUserPrice: (request: PriceCalculationRequest) => 
       calculatePrice(request, 'USER'),
   };
 }

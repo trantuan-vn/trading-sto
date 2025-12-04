@@ -5,36 +5,8 @@ import {
   ValidateVoucherRequest,
   IVoucherInfrastructureService,
 } from './domain';
-
-export function createVoucherInfrastructureService(userDO: DurableObjectStub<UserDO>): IVoucherInfrastructureService {
-  
-  const executeRepositoryAction = async (operation: string, data: any, table: string = 'vouchers'): Promise<any> => {
-    const response = await userDO.fetch('http://user.internal/repository/action', {
-      method: 'POST',
-      body: JSON.stringify({ table, operation, data })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-    }
-    
-    return await response.json();
-  };
-
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
+import { executeUtils } from '../../../shared/utils';
+export function createVoucherInfrastructureService(userDO: DurableObjectStub<UserDO>): IVoucherInfrastructureService {  
 
   // Helper methods
   const isVoucherApplicable = (voucher: any, request: any, targetType: 'SERVICE' | 'USER'): boolean => {
@@ -162,28 +134,25 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
   };
 
   return {
-    async createVoucher(request: Voucher): Promise<any> {
-
+    async createVoucher(request: Partial<Voucher>): Promise<any> {
       // Check if code already exists
-      const existingVouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [request.code]
+      const existingVouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [request.code, 'ACTIVE']
       );
-
       if (existingVouchers.length > 0) {
         throw new Error('Voucher code already exists');
       }
-
-      return await executeRepositoryAction('create', request);
+      return await executeUtils.executeDynamicAction(userDO, 'create', request);
     },
 
     async applyServiceVoucher(request: ApplyVoucher): Promise<any> {
       const { voucherCode, basePrice, serviceId } = request;
       
       // Find voucher by code
-      const vouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [voucherCode.toUpperCase()]
+      const vouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [voucherCode.toUpperCase(), 'ACTIVE']
       );
       
       if (vouchers.length === 0) {
@@ -201,7 +170,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       const discountAmount = calculateDiscount(voucher, basePrice, request.currentCalls || 0);
 
       // Update voucher usage count
-      await executeRepositoryAction('update', {
+      await executeUtils.executeDynamicAction(userDO, 'update', {
         id: voucher.id,
         data: { usedCount: voucher.usedCount + 1 }
       });
@@ -224,9 +193,9 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       const { voucherCode, basePrice, userId } = request;
       
       // Find voucher by code
-      const vouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [voucherCode.toUpperCase()]
+      const vouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [voucherCode.toUpperCase(),'ACTIVE']
       );
       
       if (vouchers.length === 0) {
@@ -244,7 +213,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       const discountAmount = calculateDiscount(voucher, basePrice, request.currentCalls || 0);
 
       // Update voucher usage count
-      await executeRepositoryAction('update', {
+      await executeUtils.executeDynamicAction(userDO, 'update', {
         id: voucher.id,
         data: { usedCount: voucher.usedCount + 1 }
       });
@@ -273,19 +242,19 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       }
 
       if (targetType) {
-        sql += ' and targetType in (?, ?)';
-        params.push(targetType, 'BOTH');
+        sql += ' and targetType = ?';
+        params.push(targetType);
       }
 
       sql += ' order by createdAt desc';
 
-      return await executeRepositorySelect(sql, params);
+      return await executeUtils.executeRepositorySelect(userDO, sql, params);
     },
 
     async getVoucherByCode(voucherCode: string): Promise<any> {
-      const vouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [voucherCode.toUpperCase()]
+      const vouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [voucherCode.toUpperCase(), 'ACTIVE']
       );
       
       if (vouchers.length === 0) {
@@ -298,9 +267,9 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
     async validateServiceVoucher(request: ValidateVoucherRequest): Promise<any> {
       const { voucherCode } = request;
       
-      const vouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [voucherCode.toUpperCase()]
+      const vouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [voucherCode.toUpperCase(), 'ACTIVE']
       );
       
       if (vouchers.length === 0) {
@@ -327,9 +296,9 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
     async validateUserVoucher(request: ValidateVoucherRequest): Promise<any> {
       const { voucherCode } = request;
       
-      const vouchers = await executeRepositorySelect(
-        'select * from vouchers where code = ?',
-        [voucherCode.toUpperCase()]
+      const vouchers = await executeUtils.executeRepositorySelect(userDO,
+        'select * from vouchers where code = ? and status = ?',
+        [voucherCode.toUpperCase(), 'ACTIVE']
       );
       
       if (vouchers.length === 0) {
@@ -354,16 +323,11 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
     },
 
     async updateVoucherStatus(voucherId: string, status: string): Promise<any> {
-      const voucher = await executeRepositoryAction('findById', { id: voucherId });
-      if (!voucher) {
-        throw new Error('Voucher not found');
-      }
-
-      return await executeRepositoryAction('update', {
+      // Update voucher
+      return await executeUtils.executeDynamicAction(userDO, 'update', {
         id: voucherId,
         data: { 
           status,
-          updatedAt: new Date().toISOString()
         }
       });
     },
@@ -382,7 +346,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
         params.push(`"${serviceId}"`);
       }
 
-      const vouchers = await executeRepositorySelect(sql, params);
+      const vouchers = await executeUtils.executeRepositorySelect(userDO, sql, params);
       
       // Filter by base price if provided
       if (basePrice !== undefined) {
@@ -403,7 +367,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       `;
       const params: any[] = [];
 
-      const vouchers = await executeRepositorySelect(sql, params);
+      const vouchers = await executeUtils.executeRepositorySelect(userDO, sql, params);
       
       // Filter by user-specific conditions
       return vouchers.filter(voucher => {

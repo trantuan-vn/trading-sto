@@ -7,37 +7,9 @@ import {
   CalculateOrderRequest,
   IOrderInfrastructureService,
 } from './domain';
-
+import { executeUtils } from '../../../shared/utils';
 export function createOrderInfrastructureService(userDO: DurableObjectStub<UserDO>, context: any, bindingName: string): IOrderInfrastructureService {
   
-  const executeRepositoryAction = async (operation: string, data: any, table: string): Promise<any> => {
-    const response = await userDO.fetch('http://user.internal/repository/action', {
-      method: 'POST',
-      body: JSON.stringify({ table, operation, data })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-    }
-    
-    return await response.json();
-  };
-
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
-
   // Helper methods
   const calculateOrderTotal = async (user: any, request: CalculateOrderRequest): Promise<any[]> => {
     const priceApp = createPriceApplicationService(context, bindingName);
@@ -46,9 +18,9 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     
     const results = await Promise.all(
       request.items.map(async (item) => {
-        const service = await executeRepositorySelect(
-          'select * from services where id = ? and is_active = ? and expires_at >= ?',
-          [item.serviceId, 'true', new Date().toISOString()]
+        const service = await executeUtils.executeRepositorySelect(userDO,
+          'select * from services where id = ? and isActive = ? and expires_at >= ?',
+          [item.serviceId, 1, new Date().toISOString()]
         ).then(rows => rows[0]);
 
         if (!service) {
@@ -56,24 +28,20 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
         }
 
         // Chuẩn bị các promise cho price calculation (luôn thực hiện)
-        const pricePromises = [
-          priceApp.calculateServicePrice(user.identifier, {
-            serviceId: service.id,
+        const priceData = {
             basePrice: item.basePrice,
-            quantity: item.quantity,
-            currency: request.currency,
-            maxCalls: service.max_calls,
-            currentCalls: service.current_calls,
-            serviceName: service.name
-          }),
-          priceApp.calculateUserPrice(user.identifier, {
-            serviceId: service.id, 
-            basePrice: item.basePrice,
-            quantity: item.quantity,
-            currency: request.currency,
             userId: user.id,
-            userRole: user.role
-          })
+            serviceId: service.id,
+            quantity: item.quantity,
+            currency: request.currency,
+            userRole: user.role,
+            serviceName: service.name,
+            currentCalls: service.current_calls,
+            maxCalls: service.max_calls
+        }
+        const pricePromises = [
+          priceApp.calculateServicePrice(user.identifier, priceData),
+          priceApp.calculateUserPrice(user.identifier, priceData)
         ];
 
         // Chuẩn bị các promise cho voucher calculation (chỉ khi có voucherCode)
@@ -201,7 +169,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     
     if (discounts?.servicePriceDiscount) {
       discountRecords.push(
-        executeRepositoryAction('create', {
+        executeUtils.executeDynamicAction(userDO, 'create', {
           orderItemId,
           discountType: discounts.servicePriceDiscount.type,
           discountAmount: discounts.servicePriceDiscount.amount,
@@ -212,7 +180,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.userPriceDiscount) {
       discountRecords.push(
-        executeRepositoryAction('create', {
+        executeUtils.executeDynamicAction(userDO, 'create', {
           orderItemId,
           discountType: discounts.userPriceDiscount.type,
           discountAmount: discounts.userPriceDiscount.amount,
@@ -223,7 +191,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.serviceVoucherDiscount) {
       discountRecords.push(
-        executeRepositoryAction('create', {
+        executeUtils.executeDynamicAction(userDO, 'create', {
           orderItemId,
           discountType: discounts.serviceVoucherDiscount.type,
           discountAmount: discounts.serviceVoucherDiscount.amount,
@@ -234,7 +202,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.userVoucherDiscount) {
       discountRecords.push(
-        executeRepositoryAction('create', {
+        executeUtils.executeDynamicAction(userDO, 'create', {
           orderItemId,
           discountType: discounts.userVoucherDiscount.type,
           discountAmount: discounts.userVoucherDiscount.amount,
@@ -267,11 +235,11 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
         notes: request.notes,
       };
 
-      const orderRecord = await executeRepositoryAction('create', orderData, 'orders');
+      const orderRecord = await executeUtils.executeDynamicAction(userDO, 'create', orderData, 'orders');
 
       // Tạo order items và discounts
       for (const item of calculationResult) {
-        const orderItem = await executeRepositoryAction('create', {
+        const orderItem = await executeUtils.executeDynamicAction(userDO, 'create', {
           serviceId: item.serviceId,
           basePrice: item.basePrice,
           quantity: item.quantity,
@@ -302,11 +270,11 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
       sql += ' order by created_at desc limit ? offset ?';
       params.push(filters.limit, (filters.page - 1) * filters.limit);
 
-      const orders = await executeRepositorySelect(sql, params);
+      const orders = await executeUtils.executeRepositorySelect(userDO, sql, params);
 
       const ordersWithItems = await Promise.all(
         orders.map(async (order) => {
-          const items = await executeRepositorySelect(
+          const items = await executeUtils.executeRepositorySelect(userDO,
             'select * from order_items where order_id = ?',
             [order.id]
           );
@@ -318,7 +286,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     },
 
     async getOrderDetail(orderId: string): Promise<any> {
-      const [order] = await executeRepositorySelect(
+      const [order] = await executeUtils.executeRepositorySelect(userDO,
         'select * from orders where id = ?',
         [orderId]
       );
@@ -328,8 +296,8 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
       }
 
       const [items, discounts] = await Promise.all([
-        executeRepositorySelect('select * from order_items where order_id = ?', [orderId]),
-        executeRepositorySelect(
+        executeUtils.executeRepositorySelect(userDO, 'select * from order_items where order_id = ?', [orderId]),
+        executeUtils.executeRepositorySelect(userDO,
           `select od.* from order_discounts od 
            join order_items oi on od.order_item_id = oi.id 
            where oi.order_id = ?`,
@@ -341,40 +309,16 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     },
 
     async updateOrderStatus(orderId: string, request: UpdateOrderStatus): Promise<any> {
-      const [order] = await executeRepositorySelect(
-        'select * from orders where id = ?',
-        [orderId]
-      );
-
-      if (!order) {
-        throw new Error('Order not found');
-      }
-
       const updateData = request.notes 
         ? { status: request.status, notes: request.notes }
         : { status: request.status };
 
-      await executeRepositoryAction('update', { id: orderId, ...updateData }, 'orders');
-      return { ...order, ...updateData, id: orderId };
+      return await executeUtils.executeDynamicAction(userDO, 'update', { id: orderId, ...updateData }, 'orders');
     },
 
     async cancelOrder(orderId: string): Promise<any> {
-      const [order] = await executeRepositorySelect(
-        'select * from orders where id = ?',
-        [orderId]
-      );
-
-      if (!order) {
-        throw new Error('Order not found');
-      }
-
-      if (['COMPLETED', 'CANCELLED'].includes(order.status)) {
-        throw new Error(`Cannot cancel order with status: ${order.status}`);
-      }
-
       const updateData = { status: 'CANCELLED' };
-      await executeRepositoryAction('update', { id: orderId, ...updateData }, 'orders');
-      return { ...order, ...updateData, id: orderId };
+      return await executeUtils.executeDynamicAction(userDO, 'update', { id: orderId, ...updateData }, 'orders');
     }
   };
 }

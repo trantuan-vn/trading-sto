@@ -50,9 +50,7 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     ipAddress: string,
     userAgent: string
   ) => {
-    
     const token = await jwtUtils.generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-    
     const refreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
 
     const sessionData: Session = {
@@ -65,8 +63,8 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       userAgent,
       isActive: true,
     };
-
     await repository.sessions.create(sessionData);
+    
     return { token, refreshToken };
   };
 
@@ -193,6 +191,8 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
 
     async verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ ok: boolean; user: any }> {
+      
+
       const result = await jwtUtils.verifyJWT(token, c.env.JWT_SECRET);
       if (!result.ok) {
         throw new Error(result.error ?? ERROR_MESSAGES.AUTH.INVALID_TOKEN);
@@ -200,16 +200,18 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       
       const identifier = result.payload?.identifier;
       if (!identifier) {
-        throw new Error(ERROR_MESSAGES.AUTH.INVALID_TOKEN);
+        throw new Error("identifier not found in token");
       }
-
+      
       const repository = getRepository(identifier);
       const user = await repository.users.get();
       if (!user) {
         throw new Error(ERROR_MESSAGES.AUTH.USER_NOT_FOUND);
       }
-
       const session = await repository.sessions.findById(sessionId);
+      if (!session) {
+        throw new Error(ERROR_MESSAGES.AUTH.SESSION_NOT_FOUND);
+      }
       validationUtils.validateSession(session, token, refreshToken);
 
       return { ok: true, user };

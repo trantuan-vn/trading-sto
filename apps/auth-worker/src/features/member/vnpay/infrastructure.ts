@@ -17,48 +17,20 @@ import { config } from './config';
 import { paymentUtils, cryptoUtils } from './utils';
 import { VNPAY_CONSTANTS, PAYMENT_STATUS, ORDER_STATUS, PAYMENT_ERROR_MESSAGES } from './constant';
 import moment from 'moment';
-
+import { executeUtils } from '../../../shared/utils';
 export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPayService {
   
-  const executeRepositoryAction = async (operation: string, data: any, table: string): Promise<any> => {
-    const response = await userDO.fetch('http://user.internal/repository/action', {
-      method: 'POST',
-      body: JSON.stringify({ table, operation, data })
-    });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to ${operation} ${table}: ${errorText}`);
-    }
-    
-    return await response.json();
-  };
-
-  const executeRepositorySelect = async (sql: string, params: any[] = []): Promise<any[]> => {
-    const response = await userDO.fetch('http://user.internal/repository/select', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to execute query: ${response.statusText}`);
-    }
-    
-    return await response.json();
-  };
-
   // Helper methods
   const updateServiceCalls = async (orderId: string, operation: 'add' | 'subtract'): Promise<void> => {
-    const orderItems = await executeRepositorySelect(
+    const orderItems = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM order_items WHERE order_id = ?',
       [orderId]
     );
 
     for (const item of orderItems) {
-      const services = await executeRepositorySelect(
-        'SELECT * FROM services WHERE id = ? AND is_active = ?',
-        [item.serviceId, true]
+      const services = await executeUtils.executeRepositorySelect(userDO,
+        'SELECT * FROM services WHERE id = ? AND isActive = ?',
+        [item.serviceId, 1]
       );
       
       if (services.length === 0) {
@@ -70,7 +42,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
         ? service.maxCalls + item.quantity
         : service.maxCalls - item.quantity;
         
-      await executeRepositoryAction('update', { 
+      await executeUtils.executeDynamicAction(userDO, 'update', { 
         id: service.id, 
         data: { maxCalls: newMaxCalls } 
       }, 'services');
@@ -78,7 +50,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
   };
 
   const validatePayment = async (paymentId: string, orderId: string, expectedAmount: number): Promise<void> => {
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ? AND status = ?',
       [paymentId, PAYMENT_STATUS.PENDING]
     );
@@ -87,7 +59,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       throw new Error(PAYMENT_ERROR_MESSAGES.PAYMENT_ALREADY_PROCESSED);
     }
 
-    const orders = await executeRepositorySelect(
+    const orders = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM orders WHERE id = ?',
       [orderId]
     );
@@ -113,7 +85,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       : PAYMENT_STATUS.FAILED;
 
     // Update payment status
-    await executeRepositoryAction('update', { 
+    await executeUtils.executeDynamicAction(userDO, 'update', { 
       id: paymentId, 
       data: { 
         status: newPaymentStatus, 
@@ -123,13 +95,13 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
 
     // If payment successful and order is pending, complete the order
     if (params.vnp_ResponseCode === '00') {
-      const orders = await executeRepositorySelect(
+      const orders = await executeUtils.executeRepositorySelect(userDO,
         'SELECT * FROM orders WHERE id = ? AND status = ?',
         [orderId, ORDER_STATUS.PENDING]
       );
 
       if (orders.length > 0) {
-        await executeRepositoryAction('update', { 
+        await executeUtils.executeDynamicAction(userDO, 'update', { 
           id: orderId, 
           data: { status: ORDER_STATUS.COMPLETED } 
         }, 'orders');
@@ -152,29 +124,29 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       refundDetails: refundResult
     });
     
-    const refund = await executeRepositoryAction('create', refundData, 'refunds');
+    const refund = await executeUtils.executeDynamicAction(userDO, 'create', refundData, 'refunds');
 
     // Update payment and order status
-    await executeRepositoryAction('update', { 
+    await executeUtils.executeDynamicAction(userDO, 'update', { 
       id: paymentId, 
       data: { status: PAYMENT_STATUS.CANCELLED } 
     }, 'payments');
 
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ?',
       [paymentId]
     );
 
     if (payments.length > 0) {
       const payment = payments[0];
-      await executeRepositoryAction('update', { 
+      await executeUtils.executeDynamicAction(userDO, 'update', { 
         id: payment.orderId, 
         data: { status: ORDER_STATUS.CANCELLED } 
       }, 'orders');
 
       await updateServiceCalls(payment.orderId, 'subtract');
       
-      await executeRepositoryAction('update', { 
+      await executeUtils.executeDynamicAction(userDO, 'update', { 
         id: refund.id, 
         data: { 
           status: refundResult.responseCode === '00' 
@@ -197,7 +169,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       status: PAYMENT_STATUS.PENDING
     });
     
-    const payment = await executeRepositoryAction('create', paymentData, 'payments');
+    const payment = await executeUtils.executeDynamicAction(userDO, 'create', paymentData, 'payments');
     
     const date = new Date();
     const createDate = moment(date).format('YYYYMMDDHHmmss');
@@ -239,7 +211,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
   };
 
   const processReturn = async (paymentId: string, params: VNPayReturn): Promise<PaymentResult> => {
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ?',
       [paymentId]
     );
@@ -264,7 +236,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
   };
 
   const processIPN = async (paymentId: string, params: VNPayReturn): Promise<PaymentResult> => {
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ?',
       [paymentId]
     );
@@ -306,7 +278,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
   };
 
   const queryTransaction = async (identifier: string, request: PaymentQuery, ipAddr: string): Promise<QueryDRResult> => {
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ?',
       [request.paymentId]
     );
@@ -371,7 +343,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
     const vnp_RequestId = moment(date).format('HHmmss');
     const vnp_CreateDate = moment(date).format('YYYYMMDDHHmmss');
     
-    const payments = await executeRepositorySelect(
+    const payments = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM payments WHERE id = ? AND status = ?',
       [request.paymentId, PAYMENT_STATUS.COMPLETED]
     );
@@ -383,7 +355,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
     const payment = payments[0];
     const vnp_TransactionNo = payment.paymentDetails!.vnp_TransactionNo;
 
-    const orders = await executeRepositorySelect(
+    const orders = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM orders WHERE id = ? AND status = ?',
       [payment.orderId, ORDER_STATUS.COMPLETED]
     );

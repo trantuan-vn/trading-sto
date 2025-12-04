@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { createServiceApplicationService } from './application';
-import { RegisterServiceSchema } from './domain';
+import { ServiceSchema } from './domain';
 import { requireAuth } from '../../auth/authMiddleware';
 import { handleError } from '../../../shared/utils';
 
@@ -30,7 +30,7 @@ export function createServiceRoutes(bindingName: string) {
   // Đăng ký dịch vụ
   app.post('/register', createRouteHandler(async (c: any, user: any) => {
     const body = await c.req.json();
-    const request = RegisterServiceSchema.parse(body);
+    const request = ServiceSchema.parse(body);
     const serviceApp = createServiceApplicationService(c, bindingName);
     const result = await serviceApp.registerService(user.identifier, request);
     return c.json(result);
