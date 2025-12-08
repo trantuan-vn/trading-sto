@@ -47,8 +47,7 @@ export function createVoucherApplicationService(c: Context, bindingName: string)
         applicableServices: voucher.applicableServices,
         applicableUsers: voucher.applicableUsers,
         userRoles: voucher.userRoles,
-        startDate: voucher.startDate,
-        endDate: voucher.endDate,
+        expiresAt: voucher.expiresAt,
         status: voucher.status,
         createdAt: voucher.createdAt,
       };
@@ -78,8 +77,7 @@ export function createVoucherApplicationService(c: Context, bindingName: string)
         usageLimit: voucher.usageLimit,
         targetType: voucher.targetType,
         status: voucher.status,
-        startDate: voucher.startDate,
-        endDate: voucher.endDate,
+        expiresAt: voucher.expiresAt,
       }));
     },
 
@@ -101,8 +99,7 @@ export function createVoucherApplicationService(c: Context, bindingName: string)
         applicableServices: voucher.applicableServices,
         applicableUsers: voucher.applicableUsers,
         userRoles: voucher.userRoles,
-        startDate: voucher.startDate,
-        endDate: voucher.endDate,
+        expiresAt: voucher.expiresAt,
         status: voucher.status,
       };
     },

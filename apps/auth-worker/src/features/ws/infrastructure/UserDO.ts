@@ -38,8 +38,8 @@ export class UserDO extends DurableObject {
       this.connections = this.table('connections', ConnectionSchema,
                     { 
                       userScoped: true, 
-                      uniqueIndexes: ['sessionId, connected'],
-                      conflictField: 'sessionId, connected', 
+                      uniqueIndexes: ['sessionId'],
+                      conflictField: 'sessionId', 
                       autoFields: { id: true, timestamps: true, user: true} 
                     });
       this.pendingMessages = this.table('pending_messages', PendingMessageSchema,
@@ -50,8 +50,8 @@ export class UserDO extends DurableObject {
       this.subscriptions = this.table('subscriptions', SubscriptionSchema,
                     { 
                       userScoped: true, 
-                      uniqueIndexes: ['channel, isActive'],
-                      conflictField: 'channel, isActive', 
+                      uniqueIndexes: ['channel'],
+                      conflictField: 'channel', 
                       autoFields: { id: true, timestamps: true, user: true} 
                     });
       
@@ -64,31 +64,36 @@ export class UserDO extends DurableObject {
       this.table('services', ServiceSchema, 
         { 
           userScoped: true, 
-          uniqueIndexes: ['endpoint, status'],
-          conflictField: 'endpoint, status', 
+          uniqueIndexes: ['endpoint'],
+          conflictField: 'endpoint', 
           autoFields: { id: true, timestamps: true, user: true} 
         }
       );       
       this.table('vouchers', VoucherSchema, 
         { 
           userScoped: true, 
-          uniqueIndexes: ['code, status'],
-          conflictField: 'code, status', 
+          uniqueIndexes: ['code'],
+          conflictField: 'code', 
           autoFields: { id: true, timestamps: true, user: true} 
         }
       );             
       // Initialize user tables
+      const tableNames = ['service_usages','order_items','order_discounts',
+                         'api_tokens','payments','refunds', 'versions'];
       [ServiceUsageSchema, OrderItemSchema, OrderItemDiscountSchema, 
        ApiTokenSchema, PaymentSchema, RefundSchema, VersionInfoSchema]
-       .forEach((schema, i) => 
-        this.table(['service_usages','order_items','order_discounts',
-                   'api_tokens','payments','refunds', 'versions'][i], schema, 
+       .forEach((schema, i) => {
+        const tableName = tableNames[i];
+        if (!tableName) {
+          throw new Error(`Table name at index ${i} is undefined`);
+        }
+        this.table(tableName, schema, 
                     { 
                       userScoped: true, 
                       autoFields: { id: true, timestamps: true, user: true} 
                     }
-                  )
-      ); 
+                  );
+      });       
 
       this.table('orders', OrderSchema, 
         { 
@@ -306,8 +311,6 @@ export class UserDO extends DurableObject {
     }
   }
 
-
-
   // =============================================
   // BROADCAST HANDLING
   // =============================================
@@ -372,7 +375,9 @@ export class UserDO extends DurableObject {
 
       const webSocketPair = new WebSocketPair();
       const [client, server] = Object.values(webSocketPair);
-      
+      if (!server) {
+        throw new Error('Failed to create WebSocket server connection');
+      }
       this.ctx.acceptWebSocket(server);
       this.ctx.waitUntil(Promise.all([this.registerUser(), this.sendPendingMessages(server)]));
 
@@ -435,7 +440,10 @@ export class UserDO extends DurableObject {
       }
     };
 
-    if (responses[message.type]) await responses[message.type]();
+    const handler = responses[message.type];
+    if (handler) {
+      await handler();
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {

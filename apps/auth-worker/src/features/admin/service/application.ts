@@ -3,13 +3,12 @@ import { getIdFromName } from '../../../shared/utils';
 import { UserDO } from '../../ws/infrastructure/UserDO';
 import { createServiceInfrastructureService } from './infrastructure';
 import {
-  RegisterService,
   ServiceUsage,
   Service,
 } from './domain';
 
 export interface IServiceApplicationService {
-  registerService(identifier: string, request: RegisterService): Promise<Service>;
+  registerService(identifier: string, request: Service): Promise<Service>;
   getUserServices(identifier: string): Promise<Service[]>;
   cancelService(identifier: string, serviceId: string): Promise<void>;
   getServiceUsage(identifier: string, serviceId: string, days?: number): Promise<ServiceUsage[]>;
@@ -23,7 +22,7 @@ export function createServiceApplicationService(c: Context, bindingName: string)
   };
 
   return {
-    async registerService(identifier: string, request: RegisterService): Promise<any> {
+    async registerService(identifier: string, request: Service): Promise<any> {
       const serviceInfra = getServiceInfrastructure(identifier);
       return await serviceInfra.registerService(request);
     },

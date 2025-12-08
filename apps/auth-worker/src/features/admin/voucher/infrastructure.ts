@@ -10,9 +10,6 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
 
   // Helper methods
   const isVoucherApplicable = (voucher: any, request: any, targetType: 'SERVICE' | 'USER'): boolean => {
-    const now = new Date();
-    const startDate = new Date(voucher.startDate);
-    const endDate = new Date(voucher.endDate);
 
     // Check target type
     if (targetType === 'SERVICE' && voucher.targetType !== 'SERVICE' && voucher.targetType !== 'BOTH') {
@@ -29,7 +26,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
     }
 
     // Check date validity
-    if (now < startDate || now > endDate) {
+    if (new Date(voucher.expiresAt) < new Date()) {
       return false;
     }
 
@@ -143,7 +140,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       if (existingVouchers.length > 0) {
         throw new Error('Voucher code already exists');
       }
-      return await executeUtils.executeDynamicAction(userDO, 'create', request);
+      return await executeUtils.executeDynamicAction(userDO, 'insert', request, 'vouchers');
     },
 
     async applyServiceVoucher(request: ApplyVoucher): Promise<any> {
@@ -173,7 +170,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       await executeUtils.executeDynamicAction(userDO, 'update', {
         id: voucher.id,
         data: { usedCount: voucher.usedCount + 1 }
-      });
+      }, 'vouchers');
 
       return {
         voucher: {
@@ -216,7 +213,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
       await executeUtils.executeDynamicAction(userDO, 'update', {
         id: voucher.id,
         data: { usedCount: voucher.usedCount + 1 }
-      });
+      }, 'vouchers');
 
       return {
         voucher: {
@@ -329,7 +326,7 @@ export function createVoucherInfrastructureService(userDO: DurableObjectStub<Use
         data: { 
           status,
         }
-      });
+      }, 'vouchers');
     },
 
     async getAvailableServiceVouchers(serviceId?: string, basePrice?: number): Promise<any[]> {

@@ -46,8 +46,9 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
     }
 
     // Check date validity
-    if (policy.startDate && new Date(policy.startDate) > now) return false;
-    if (policy.endDate && new Date(policy.endDate) < now) return false;
+    if (new Date(policy.expiresAt) < new Date()) {
+      return false;
+    }
 
     return true;
   };
@@ -105,7 +106,7 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
 
   const calculatePrice = async (request: PriceCalculationRequest, targetType: 'SERVICE' | 'USER') => {
     const activePolicies = await executeUtils.executeRepositorySelect(userDO,
-      'select * from price_policies where status = ? and target_type = ? order by priority desc',
+      'select * from price_policies where status = ? and targetType = ? order by priority desc',
       ['ACTIVE', targetType]
     );
 
@@ -142,7 +143,7 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
 
   return {
     createPricePolicy: (request: Partial<PricePolicy>) => 
-      executeUtils.executeDynamicAction(userDO, 'create', request, 'price_policies'),
+      executeUtils.executeDynamicAction(userDO, 'insert', request, 'price_policies'),
 
     updatePricePolicy: (policyId: string, request: Partial<PricePolicy>) => 
       executeUtils.executeDynamicAction(userDO, 'update', { id: policyId, ...request }, 'price_policies'),

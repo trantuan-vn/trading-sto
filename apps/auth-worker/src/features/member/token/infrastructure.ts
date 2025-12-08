@@ -89,7 +89,7 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
       isActive: true,
     };
 
-    const createdToken = await executeUtils.executeDynamicAction(userDO, 'create', apiToken);
+    const createdToken = await executeUtils.executeDynamicAction(userDO, 'insert', apiToken);
     
     return { 
       apiToken: createdToken, 

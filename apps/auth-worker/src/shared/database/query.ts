@@ -108,7 +108,11 @@ export class GenericQuery<T> {
           .filter(clause => clause !== '');
         
         if (subClauses.length === 0) return '';
-        if (subClauses.length === 1) return subClauses[0];
+        
+        if (subClauses.length === 1) {
+          const firstClause = subClauses[0];
+          return firstClause ?? '';
+        }
         
         const operator = condition.type.toUpperCase();
         return `(${subClauses.join(` ${operator} `)})`;
@@ -171,7 +175,10 @@ export class GenericQuery<T> {
       .filter(clause => clause !== '');
 
     if (clauses.length === 0) return '';
-    if (clauses.length === 1) return clauses[0];
+    if (clauses.length === 1) {
+      const firstClause = clauses[0];
+      return firstClause ?? '';
+    }    
 
     return clauses.join(' AND ');
   }
@@ -269,7 +276,11 @@ export class GenericQuery<T> {
 
     const cursor = this.storage.sql.exec(sql, ...params);
     const results = cursor.toArray();
-    return results.length > 0 ? Number(results[0].count) : 0;
+    if (results.length === 0) {
+      return 0;
+    }
+    const firstResult = results[0];
+    return firstResult ? Number(firstResult.count) : 0;
   }
 }
 

@@ -21,8 +21,8 @@ export const AUTH_CONSTANTS = {
   RESERVED_PREFIX: "__",
   RATE_LIMIT_MAX: 5,
   RATE_LIMIT_WINDOW: 60_000, // 1 minute
-  ACCESS_TOKEN_EXPIRY: 3 * 60, // 3 minutes
-  REFRESH_TOKEN_EXPIRY: 15 * 60, // 15 minutes
-  SESSION_EXPIRY: 30 * 60, // 30 minutes
+  ACCESS_TOKEN_EXPIRY: 15 * 60, // 3 minutes
+  REFRESH_TOKEN_EXPIRY: 4 * 60 * 60, // 15 minutes
+  SESSION_EXPIRY: 4 * 60 * 60, // 30 minutes
   NONCE_EXPIRY: 5 * 60 // 5 minutes
 } as const;

@@ -8,9 +8,6 @@ import {
 } from './domain';
 
 import { executeUtils } from '../../../shared/utils';
-const executeRepositoryAction = executeUtils.executeRepositoryAction;
-const executeRepositorySelect = executeUtils.executeRepositorySelect;
-const executeDynamicAction = executeUtils.executeDynamicAction;
 
 export function createVersionInfrastructureService(env: Env, userDO: DurableObjectStub<UserDO>): IVersionInfrastructureService {
   
@@ -19,9 +16,9 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
   // Helper để lấy tất cả dữ liệu từ các bảng
   const fetchAllTableData = async () => {
     const [pricePolicies, services, vouchers] = await Promise.all([
-      executeRepositorySelect(userDO, 'SELECT * FROM price_policies ORDER BY created_at DESC'),
-      executeRepositorySelect(userDO, 'SELECT * FROM services ORDER BY created_at DESC'),
-      executeRepositorySelect(userDO, 'SELECT * FROM vouchers ORDER BY created_at DESC')
+      executeUtils.executeRepositorySelect(userDO, 'SELECT * FROM price_policies ORDER BY created_at DESC'),
+      executeUtils.executeRepositorySelect(userDO, 'SELECT * FROM services ORDER BY created_at DESC'),
+      executeUtils.executeRepositorySelect(userDO, 'SELECT * FROM vouchers ORDER BY created_at DESC')
     ]);
 
     return { pricePolicies, services, vouchers };
@@ -80,24 +77,16 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
         timestamp: versionData.timestamp,
         recordCounts
       });
-      await executeRepositoryAction(userDO, 'create', version, 'versions');
-
-      return {
-        version: newVersion,
-        timestamp: versionData.timestamp,
-        recordCounts
-      };
+      return await executeUtils.executeDynamicAction(userDO, 'insert', version, 'versions');
     },
 
     async upgradeVersion(): Promise<VersionInfo> {
       const version = await getCurrentVersionNumber();
-      
-      const versions = await executeRepositorySelect(
+      const versions = await executeUtils.executeRepositorySelect(
         userDO, 
         'SELECT version FROM versions where version = (select max(version) from versions)'
       );
-      
-      if (versions.length > 0 && (versions[0].version !== version)) {
+      if ((versions.length > 0 && (versions[0].version !== version)) || versions.length === 0) {
         const object = await env.R2_VERSION_BUCKET.get(`version-${version}.json`);
         
         if (object) {
@@ -113,7 +102,7 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
             operations.push({
               table: 'price_policies',
               operation: 'delete',
-              data: {} // Có thể thêm điều kiện nếu cần
+              where: { field: 1, operator: '=', value: 1 }
             });
             
             // Thêm operations insert cho price_policies
@@ -132,7 +121,7 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
             operations.push({
               table: 'services',
               operation: 'delete',
-              data: {} // Có thể thêm điều kiện nếu cần
+              where: { field: 1, operator: '=', value: 1 } 
             });
             
             // Thêm operations insert cho services
@@ -151,7 +140,7 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
             operations.push({
               table: 'vouchers',
               operation: 'delete',
-              data: {} // Có thể thêm điều kiện nếu cần
+              where: { field: 1, operator: '=', value: 1 } 
             });
             
             // Thêm operations insert cho vouchers
@@ -166,14 +155,20 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
           
           // Thực hiện multi-table operations nếu có
           if (operations.length > 0) {
-            await executeDynamicAction(userDO, 'multi-table', {
+            await executeUtils.executeDynamicAction(userDO, 'multi-table', {
               operations: operations
             });            
           }
+
+        }
+        else {
+          throw new Error(`Version ${version} on R2_VERSION_BUCKET not found`);
         }
       }
-      
-      return { version };
+            
+      return { 
+        version: version,
+      };
     },
     
     async getVersionData(versionId: string): Promise<VersionData> {
@@ -198,7 +193,7 @@ export function createVersionInfrastructureService(env: Env, userDO: DurableObje
     },
 
     async getVersionList(): Promise<VersionListResponse> {
-      const versions = await executeRepositorySelect(userDO, 'SELECT * FROM versions ORDER BY version DESC');
+      const versions = await executeUtils.executeRepositorySelect(userDO, 'SELECT * FROM versions ORDER BY version DESC');
       return {
         versions,
         total: versions.length

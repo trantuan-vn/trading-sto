@@ -17,6 +17,7 @@ import { config } from './config';
 import { paymentUtils, cryptoUtils } from './utils';
 import { VNPAY_CONSTANTS, PAYMENT_STATUS, ORDER_STATUS, PAYMENT_ERROR_MESSAGES } from './constant';
 import moment from 'moment';
+
 import { executeUtils } from '../../../shared/utils';
 export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPayService {
   
@@ -124,7 +125,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       refundDetails: refundResult
     });
     
-    const refund = await executeUtils.executeDynamicAction(userDO, 'create', refundData, 'refunds');
+    const refund = await executeUtils.executeDynamicAction(userDO, 'insert', refundData, 'refunds');
 
     // Update payment and order status
     await executeUtils.executeDynamicAction(userDO, 'update', { 
@@ -169,7 +170,7 @@ export function createVNPayService(userDO: DurableObjectStub<UserDO>): IVNPaySer
       status: PAYMENT_STATUS.PENDING
     });
     
-    const payment = await executeUtils.executeDynamicAction(userDO, 'create', paymentData, 'payments');
+    const payment = await executeUtils.executeDynamicAction(userDO, 'insert', paymentData, 'payments');
     
     const date = new Date();
     const createDate = moment(date).format('YYYYMMDDHHmmss');

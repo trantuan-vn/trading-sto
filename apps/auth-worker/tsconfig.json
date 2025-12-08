@@ -2,7 +2,6 @@
   "compilerOptions": {
     "types": [
         "./worker-configuration.d.ts",
-        "./worker-configuration.d.ts",
         "node"
     ],
     /* Visit https://aka.ms/tsconfig.json to read more about this file */

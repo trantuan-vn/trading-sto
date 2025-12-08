@@ -10,7 +10,6 @@ import {
   SIWEAuthSchema 
 } from './domain';
 import { cookieUtils, oauthUtils } from './utils';
-import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
 
 export function createAuthRoutes(bindingName: string) {
   const app = new Hono<{ Bindings: Env }>();

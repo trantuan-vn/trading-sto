@@ -180,7 +180,8 @@ export class DynamicDataBuilder {
       operation?: 'create' | 'update';
     } = {}
   ): any {
-    let processedData = schema.parse(data);
+    const preprocessedData = this.preprocessData(data, schema);
+    let processedData = schema.parse(preprocessedData);
 
     // Auto-generate fields based on configuration
     if (options.autoFields) {
@@ -221,10 +222,11 @@ export class DynamicDataBuilder {
 
       if (fieldSchema) {
         // Auto JSON stringify for array/object fields
-        if (this.isObjectLikeSchema(fieldSchema) && typeof value === 'string') {
-          transformed[key] = JSON.stringify(value);
-        }
-        
+        if (this.isObjectLikeSchema(fieldSchema) && value !== null && value !== undefined) {
+          if (typeof value === 'object' || Array.isArray(value)) {
+            transformed[key] = JSON.stringify(value);
+          }
+        }        
         // Convert boolean to integer for SQLite (nhất quán với parseFromDatabase)
         if (SchemaTypeChecker.isBooleanSchema(fieldSchema) && typeof value === 'boolean') {
           transformed[key] = value ? 1 : 0;
@@ -315,6 +317,152 @@ export class DynamicDataBuilder {
     // Kiểm tra nếu schema là object hoặc array (có thể chứa JSON)
     return SchemaTypeChecker.isObjectSchema(schema) || SchemaTypeChecker.isArraySchema(schema);
   }
+
+/**
+   * Preprocess data to parse JSON strings and convert types before validation
+   * Handles: JSON strings, nested objects/arrays, boolean/number/date conversions
+   */
+  private static preprocessData(data: any, schema: z.ZodSchema): any {
+    if (!data) return data;
+    
+    // Handle arrays - preprocess each element
+    if (Array.isArray(data)) {
+      return data.map(item => this.preprocessData(item, schema));
+    }
+    
+    // Handle non-object types
+    if (typeof data !== 'object') return data;
+
+    const preprocessed = { ...data };
+    const schemaShape = schema instanceof z.ZodObject ? schema.shape : {};
+
+    Object.keys(preprocessed).forEach(key => {
+      const value = preprocessed[key];
+      const fieldSchema = this.unwrapOptionalSchema(schemaShape[key]);
+
+      if (fieldSchema && value !== null && value !== undefined) {
+        // 1. Parse JSON strings for object/array fields
+        if (typeof value === 'string' && this.isObjectLikeSchema(fieldSchema)) {
+          try {
+            const potentialJson = JSON.parse(value);
+            // Only parse if result is object or array
+            if (Array.isArray(potentialJson) || typeof potentialJson === 'object') {
+              preprocessed[key] = this.preprocessData(potentialJson, fieldSchema);
+            }
+          } catch {
+            // Not valid JSON, keep as string
+          }
+        }
+        
+        // 2. Handle nested objects/arrays - recursively preprocess
+        if (typeof value === 'object' && this.isObjectLikeSchema(fieldSchema)) {
+          if (Array.isArray(value)) {
+            // Array of items - preprocess each item if schema has element type
+            const elementSchema = this.getArrayElementSchema(fieldSchema);
+            if (elementSchema) {
+              preprocessed[key] = value.map(item => 
+                typeof item === 'string' && this.isObjectLikeSchema(elementSchema)
+                  ? this.tryParseJson(item, elementSchema)
+                  : this.preprocessData(item, elementSchema)
+              );
+            }
+          } else {
+            // Nested object - recursively preprocess
+            preprocessed[key] = this.preprocessData(value, fieldSchema);
+          }
+        }
+        
+        // 3. Convert boolean from number/string (1/0, '1'/'0', 'true'/'false')
+        if (SchemaTypeChecker.isBooleanSchema(fieldSchema)) {
+          if (typeof value === 'number') {
+            preprocessed[key] = value === 1;
+          } else if (typeof value === 'string') {
+            const lower = value.toLowerCase();
+            if (lower === '1' || lower === 'true') {
+              preprocessed[key] = true;
+            } else if (lower === '0' || lower === 'false') {
+              preprocessed[key] = false;
+            }
+          }
+        }
+        
+        // 4. Convert number from string
+        if (SchemaTypeChecker.isNumberSchema(fieldSchema)) {
+          if (typeof value === 'string') {
+            const num = Number(value);
+            if (!isNaN(num) && value.trim() !== '') {
+              preprocessed[key] = num;
+            }
+          }
+        }
+        
+        // 5. Convert date from string/timestamp
+        if (SchemaTypeChecker.isDateSchema(fieldSchema)) {
+          if (typeof value === 'number') {
+            preprocessed[key] = new Date(value);
+          } else if (typeof value === 'string') {
+            const date = new Date(value);
+            if (!isNaN(date.getTime())) {
+              preprocessed[key] = date;
+            }
+          }
+        }
+      }
+    });
+
+    return preprocessed;
+  }
+
+  /**
+   * Unwrap optional schema to get the inner type
+   */
+  private static unwrapOptionalSchema(schema: z.ZodTypeAny | undefined): z.ZodTypeAny | undefined {
+    if (!schema) return undefined;
+    
+    // Handle ZodOptional
+    if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+      return schema._def.innerType;
+    }
+    
+    // Handle ZodDefault
+    if (schema instanceof z.ZodDefault) {
+      return schema._def.innerType;
+    }
+    
+    return schema;
+  }
+
+  /**
+   * Get element schema from array schema
+   */
+  private static getArrayElementSchema(schema: z.ZodTypeAny): z.ZodTypeAny | undefined {
+    if (schema instanceof z.ZodArray) {
+      return schema._def.type;
+    }
+    
+    // Handle optional/nullable arrays
+    const unwrapped = this.unwrapOptionalSchema(schema);
+    if (unwrapped instanceof z.ZodArray) {
+      return unwrapped._def.type;
+    }
+    
+    return undefined;
+  }
+
+  /**
+   * Try to parse JSON string and preprocess if successful
+   */
+  private static tryParseJson(value: string, schema: z.ZodTypeAny): any {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed) || typeof parsed === 'object') {
+        return this.preprocessData(parsed, schema);
+      }
+    } catch {
+      // Not valid JSON
+    }
+    return value;
+  }  
 }
 
 export class UserDODatabase {  
@@ -330,14 +478,6 @@ export class UserDODatabase {
 
   setOrganizationContext(organizationId?: string): void {
     this.organizationContext = organizationId;
-  }
-
-  getTable(name: string): GenericTable<any> | undefined {
-    return this.tables.get(name);
-  }
-
-  getTableConfig(name: string): TableConfig | undefined {
-    return this.tableConfigs.get(name);
   }
 
   registerTable(name: string, schema: z.ZodSchema, options: TableOptions = {}): void {
@@ -652,7 +792,7 @@ export class UserDODatabase {
   } 
 
   private ensureTableExists(name: string, schema: z.ZodSchema, options: TableOptions): void {
-    const schemaShape = schema instanceof z.ZodObject ? schema.shape : {};
+    const schemaShape = this.extractSchemaShape(schema);
     const columns = this.buildColumnDefinitions(schemaShape, options);
 
     const createSQL = `CREATE TABLE IF NOT EXISTS "${name}" (
@@ -660,12 +800,43 @@ export class UserDODatabase {
     )`;
 
     try {
-      this.storage.sql.exec(createSQL);
-      this.createIndexes(name, options);
+      this.storage.sql.exec(createSQL);      
     } catch (err) {
-      throw new Error(`Failed to create table ${name}: ${err}`);
+      console.error(`Error in ensureTableExists, sql: ${createSQL}`);
+      throw err;
     }
+    this.createIndexes(name, options);
   }
+  private extractSchemaShape(schema: z.ZodSchema): Record<string, z.ZodTypeAny> {
+    // Base case: ZodObject
+    if (schema instanceof z.ZodObject) {
+      return schema.shape;
+    }
+    
+    // ZodEffects từ .refine(), .transform(), etc.
+    if (schema instanceof z.ZodEffects) {
+      return this.extractSchemaShape(schema._def.schema);
+    }
+    
+    // ZodOptional, ZodDefault, ZodNullable
+    if (schema instanceof z.ZodOptional || 
+        schema instanceof z.ZodDefault || 
+        schema instanceof z.ZodNullable) {
+      return this.extractSchemaShape(schema._def.innerType);
+    }
+    
+    // ZodArray
+    if (schema instanceof z.ZodArray) {
+      return this.extractSchemaShape(schema._def.type);
+    }
+    
+    // ZodRecord, ZodMap, etc. (nếu cần)
+    if (schema instanceof z.ZodRecord) {
+      return {};
+    }
+    
+    throw new Error(`Unsupported Zod schema type: ${schema.constructor.name}`);
+  }  
 
   private buildColumnDefinitions(schemaShape: any, options: TableOptions): string[] {
     const columns: string[] = [];
@@ -710,44 +881,199 @@ export class UserDODatabase {
     return columns;
   }
 
-  private getColumnType(zodType: z.ZodTypeAny): string {
-    // Simplified type mapping - the actual transformation happens in DynamicDataBuilder
-    if (zodType instanceof z.ZodString || zodType instanceof z.ZodEnum) {
+  private getColumnType(zodType: z.ZodTypeAny): string {    
+    // Recursively unwrap Zod types
+    const unwrappedType = this.unwrapZodType(zodType);
+        
+    // Map to SQLite types
+    if (unwrappedType instanceof z.ZodString) {
       return 'TEXT';
-    } else if (zodType instanceof z.ZodNumber) {
-      return 'REAL';
-    } else if (zodType instanceof z.ZodBoolean) {
+    } else if (unwrappedType instanceof z.ZodNumber) {
+      return this.isIntegerType(unwrappedType) ? 'INTEGER' : 'REAL';
+    } else if (unwrappedType instanceof z.ZodBoolean) {
       return 'INTEGER';
-    } else if (zodType instanceof z.ZodDate) {
+    } else if (unwrappedType instanceof z.ZodDate) {
       return 'INTEGER';
-    } else if (zodType instanceof z.ZodArray || zodType instanceof z.ZodObject) {
+    } else if (unwrappedType instanceof z.ZodBigInt) {
       return 'TEXT';
-    } else if (zodType instanceof z.ZodOptional || zodType instanceof z.ZodNullable) {
-      return this.getColumnType(zodType._def.innerType);
-    } else if (zodType instanceof z.ZodDefault) {
-      return this.getColumnType(zodType._def.innerType);
+    } else if (unwrappedType instanceof z.ZodEnum) {
+      return 'TEXT';
+    } else if (unwrappedType instanceof z.ZodNativeEnum) {
+      return 'TEXT';
+    } else if (unwrappedType instanceof z.ZodLiteral) {
+      // Check literal value type
+      const value = (unwrappedType as any)._def.value;
+      if (typeof value === 'boolean') {
+        return 'INTEGER';
+      } else if (typeof value === 'number') {
+        return Number.isInteger(value) ? 'INTEGER' : 'REAL';
+      } else {
+        return 'TEXT';
+      }
     } else {
+      // Default for objects, arrays, etc.
       return 'TEXT';
     }
   }
 
+  /**
+   * Recursively unwrap Zod types
+   */
+  private unwrapZodType(zodType: z.ZodTypeAny): z.ZodTypeAny {
+    const def = (zodType as any)._def;
+    
+    // Handle ZodEffects (preprocess/transform/refine)
+    if (zodType instanceof z.ZodEffects) {
+      if (def.schema) {
+        return this.unwrapZodType(def.schema);
+      }
+      if (def.innerType) {
+        return this.unwrapZodType(def.innerType);
+      }
+    }
+    
+    // Handle other wrapper types
+    if (zodType instanceof z.ZodOptional ||
+        zodType instanceof z.ZodNullable ||
+        zodType instanceof z.ZodDefault ||
+        zodType instanceof z.ZodBranded ||
+        zodType instanceof z.ZodReadonly ||
+        zodType instanceof z.ZodCatch ||
+        zodType instanceof z.ZodPromise) {
+      
+      if (def.innerType) {
+        return this.unwrapZodType(def.innerType);
+      }
+      if (def.valueType) {
+        return this.unwrapZodType(def.valueType);
+      }
+      if (def.type) {
+        return this.unwrapZodType(def.type);
+      }
+    }
+    
+    // Handle ZodLazy
+    if (zodType instanceof z.ZodLazy && def.getter) {
+      try {
+        return this.unwrapZodType(def.getter());
+      } catch {
+        return z.string();
+      }
+    }
+    
+    // Handle pipeline
+    if ((zodType as any).constructor.name === 'ZodPipeline' && def.in) {
+      return this.unwrapZodType(def.in);
+    }
+    
+    // Handle unions
+    if (zodType instanceof z.ZodUnion) {
+      const options = def.options as z.ZodTypeAny[];
+      const unwrappedTypes = options.map(opt => this.unwrapZodType(opt));
+      
+      // Try to find a boolean type in the union
+      const booleanType = unwrappedTypes.find(t => t instanceof z.ZodBoolean);
+      if (booleanType) return booleanType;
+      
+      // Try to find a number type
+      const numberType = unwrappedTypes.find(t => t instanceof z.ZodNumber);
+      if (numberType) return numberType;
+      
+      // Try to find a string type
+      const stringType = unwrappedTypes.find(t => t instanceof z.ZodString);
+      if (stringType) return stringType;
+      
+      // Return first type
+      return unwrappedTypes[0] || z.string();
+    }
+    
+    // Handle intersections
+    if (zodType instanceof z.ZodIntersection) {
+      const left = this.unwrapZodType(def.left);
+      const right = this.unwrapZodType(def.right);
+      
+      // Prefer boolean > number > string > other
+      if (left instanceof z.ZodBoolean || right instanceof z.ZodBoolean) {
+        return z.boolean();
+      }
+      if (left instanceof z.ZodNumber || right instanceof z.ZodNumber) {
+        return z.number();
+      }
+      if (left instanceof z.ZodString || right instanceof z.ZodString) {
+        return z.string();
+      }
+      
+      return left;
+    }
+    
+    // Handle discriminated unions
+    if (zodType instanceof z.ZodDiscriminatedUnion) {
+      const allTypes: z.ZodTypeAny[] = [];
+      for (const options of def.options.values()) {
+        options.forEach((opt: z.ZodTypeAny) => 
+          allTypes.push(this.unwrapZodType(opt))
+        );
+      }
+      
+      // Similar logic to regular union
+      const booleanType = allTypes.find(t => t instanceof z.ZodBoolean);
+      if (booleanType) return booleanType;
+      
+      const numberType = allTypes.find(t => t instanceof z.ZodNumber);
+      if (numberType) return numberType;
+      
+      const stringType = allTypes.find(t => t instanceof z.ZodString);
+      if (stringType) return stringType;
+      
+      return allTypes[0] || z.string();
+    }
+    
+    // Return the type as-is
+    return zodType;
+  }
+
+  /**
+   * Check if a ZodNumber type represents an integer
+   */
+  private isIntegerType(zodNumber: z.ZodNumber): boolean {
+    const checks = (zodNumber as any)._def.checks || [];
+    return checks.some((check: any) => check.kind === 'int');
+  }
   private createIndexes(tableName: string, options: TableOptions): void {
     // Create regular indexes
     for (const index of options.indexes || []) {
       const indexSQL = `CREATE INDEX IF NOT EXISTS "idx_${tableName}_${index}" ON "${tableName}" ("${index}")`;
-      this.storage.sql.exec(indexSQL);
+      try {
+        this.storage.sql.exec(indexSQL);
+      }
+      catch (e) {
+        console.error(`Error in createIndexes, sql: ${indexSQL}`);
+        throw e;
+      }                        
     }
 
     // Create unique indexes
     for (const uniqueIndex of options.uniqueIndexes || []) {
       const uniqueIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS "uidx_${tableName}_${uniqueIndex}" ON "${tableName}" ("${uniqueIndex}")`;
-      this.storage.sql.exec(uniqueIndexSQL);
+      try {
+        this.storage.sql.exec(uniqueIndexSQL);
+      }
+      catch (e) {
+        console.error(`Error in createIndexes, sql: ${uniqueIndexSQL}`);
+        throw e;
+      }                  
     }
 
     // Create composite unique indexes for user/organization scoped tables
     if (options.userScoped && options.organizationScoped) {
       const compositeUniqueSQL = `CREATE UNIQUE INDEX IF NOT EXISTS "uidx_${tableName}_user_org" ON "${tableName}" ("user_id", "organization_id")`;
-      this.storage.sql.exec(compositeUniqueSQL);
+      try {
+        this.storage.sql.exec(compositeUniqueSQL);
+      }
+      catch (e) {
+        console.error(`Error in createIndexes, sql: ${compositeUniqueSQL}`);
+        throw e;
+      }      
     }
   }
 
@@ -755,98 +1081,32 @@ export class UserDODatabase {
     if (!operations.length) {
       throw new Error('Empty transaction');
     }    
-    await this.storage.transactionSync(async () => {
-      for (const op of operations) {
-        this.storage.sql.exec(op.sql, ...(op.params || []));
-      }        
-    });
+      await this.storage.transactionSync(async () => {
+        for (const op of operations) {
+          try {
+            this.storage.sql.exec(op.sql, ...(op.params || []));              
+          }
+          catch (e) {
+            console.error(`Error in execTransaction, sql: ${op.sql}, params: ${JSON.stringify((op.params || []))}`);
+            throw e;
+          }
+        }        
+      });
   }
 
   async execSelectSQL(sql: string, params: any[] = []): Promise<any[]> {
     if (!sql.trim().toUpperCase().startsWith('SELECT')) {
       throw new Error('Only SELECT statements are allowed in execSelectSQL');
     }      
-    const cursor = this.storage.sql.exec(sql, ...params);
+    let cursor;
+    try {
+      cursor = this.storage.sql.exec(sql, ...params);
+    }
+    catch (e) {
+      console.error(`Error in execSelectSQL, sql: ${sql}, params: ${JSON.stringify(params)}`);
+      throw e;
+    }
     const result = cursor.toArray();
     return result;
-  }
-
-  // Method to check if unique constraint violation occurred
-  isUniqueConstraintError(error: any): boolean {
-    return error instanceof Error && (
-      error.message.includes('UNIQUE constraint failed') ||
-      error.message.includes('constraint failed') ||
-      error.message.includes('unique constraint') ||
-      error.message.includes('Duplicate entry')
-    );
-  }
-
-  // Method to get unique constraint details
-  getUniqueConstraintDetails(tableName: string): string[] {
-    const config = this.tableConfigs.get(tableName);
-    if (!config) return [];
-
-    const uniqueFields: string[] = [];
-
-    // Add conflictField as unique
-    if (config.options.conflictField) {
-      uniqueFields.push(config.options.conflictField);
-    }
-
-    // Add uniqueIndexes
-    if (config.options.uniqueIndexes) {
-      uniqueFields.push(...config.options.uniqueIndexes);
-    }
-
-    // Add composite unique for user/org scoped tables
-    if (config.options.userScoped && config.options.organizationScoped) {
-      uniqueFields.push('user_id,organization_id');
-    }
-
-    return uniqueFields;
-  }
-
-  // Method to drop table (for testing/cleanup)
-  async dropTable(name: string): Promise<void> {
-    const dropSQL = `DROP TABLE IF EXISTS "${name}"`;
-    this.storage.sql.exec(dropSQL);
-    this.tables.delete(name);
-    this.tableConfigs.delete(name);
-  }
-
-  // Get all registered table names
-  getRegisteredTables(): string[] {
-    return Array.from(this.tableConfigs.keys());
-  }
-
-  // Get table schema information
-  getTableInfo(tableName: string): {
-    columns: string[];
-    indexes: string[];
-    uniqueIndexes: string[];
-    conflictField?: string;
-  } {
-    const config = this.tableConfigs.get(tableName);
-    if (!config) {
-      throw new Error(`Table ${tableName} not found`);
-    }
-
-    const schemaShape = config.schema instanceof z.ZodObject ? config.schema.shape : {};
-    const columns = Object.keys(schemaShape);
-
-    // Add auto fields
-    if (config.options.autoFields?.id !== false) columns.push('id');
-    if (config.options.autoFields?.timestamps !== false) {
-      columns.push('created_at', 'updated_at');
-    }
-    if (config.options.autoFields?.user !== false) columns.push('user_id');
-    if (config.options.autoFields?.organization !== false) columns.push('organization_id');
-
-    return {
-      columns,
-      indexes: config.options.indexes || [],
-      uniqueIndexes: config.options.uniqueIndexes || [],
-      conflictField: config.options.conflictField
-    };
   }
 }

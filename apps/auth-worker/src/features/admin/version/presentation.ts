@@ -32,7 +32,7 @@ export function createVersionRoutes(bindingName: string) {
   }, 'Failed to save new version', true));
 
   // Lấy danh sách các version - chỉ admin
-  app.get('/', createRouteHandler(async (c: any, user: any) => {
+  app.get('/list', createRouteHandler(async (c: any, user: any) => {
     const versionApp = createVersionApplicationService(c, bindingName);
     const result = await versionApp.getVersionList(user.identifier);
     return c.json(result);

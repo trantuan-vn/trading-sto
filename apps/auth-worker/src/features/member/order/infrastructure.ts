@@ -169,7 +169,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     
     if (discounts?.servicePriceDiscount) {
       discountRecords.push(
-        executeUtils.executeDynamicAction(userDO, 'create', {
+        executeUtils.executeDynamicAction(userDO, 'insert', {
           orderItemId,
           discountType: discounts.servicePriceDiscount.type,
           discountAmount: discounts.servicePriceDiscount.amount,
@@ -180,7 +180,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.userPriceDiscount) {
       discountRecords.push(
-        executeUtils.executeDynamicAction(userDO, 'create', {
+        executeUtils.executeDynamicAction(userDO, 'insert', {
           orderItemId,
           discountType: discounts.userPriceDiscount.type,
           discountAmount: discounts.userPriceDiscount.amount,
@@ -191,7 +191,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.serviceVoucherDiscount) {
       discountRecords.push(
-        executeUtils.executeDynamicAction(userDO, 'create', {
+        executeUtils.executeDynamicAction(userDO, 'insert', {
           orderItemId,
           discountType: discounts.serviceVoucherDiscount.type,
           discountAmount: discounts.serviceVoucherDiscount.amount,
@@ -202,7 +202,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
 
     if (discounts?.userVoucherDiscount) {
       discountRecords.push(
-        executeUtils.executeDynamicAction(userDO, 'create', {
+        executeUtils.executeDynamicAction(userDO, 'insert', {
           orderItemId,
           discountType: discounts.userVoucherDiscount.type,
           discountAmount: discounts.userVoucherDiscount.amount,
@@ -235,11 +235,11 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
         notes: request.notes,
       };
 
-      const orderRecord = await executeUtils.executeDynamicAction(userDO, 'create', orderData, 'orders');
+      const orderRecord = await executeUtils.executeDynamicAction(userDO, 'insert', orderData, 'orders');
 
       // Tạo order items và discounts
       for (const item of calculationResult) {
-        const orderItem = await executeUtils.executeDynamicAction(userDO, 'create', {
+        const orderItem = await executeUtils.executeDynamicAction(userDO, 'insert', {
           serviceId: item.serviceId,
           basePrice: item.basePrice,
           quantity: item.quantity,

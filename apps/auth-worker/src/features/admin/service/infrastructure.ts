@@ -7,13 +7,9 @@ import { executeUtils } from '../../../shared/utils';
 export function createServiceInfrastructureService(userDO: DurableObjectStub<UserDO>): IServiceInfrastructureService {
 
   return {
-    async registerService(request: Partial<Service>): Promise<any> {
-      const serviceData = {
-        name: request.name,
-        endpoint: request.endpoint
-      };
-
-      return await executeUtils.executeDynamicAction(userDO, 'create', serviceData, 'services');
+    async registerService(request: Service): Promise<any> {
+      console.log(`Registering service: ${JSON.stringify(request)}`);
+      return await executeUtils.executeDynamicAction(userDO, 'upsert', request, 'services');
     },
 
     async getUserServices(): Promise<any[]> {

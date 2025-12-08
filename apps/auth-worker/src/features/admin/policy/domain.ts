@@ -22,8 +22,30 @@ export const PricePolicySchema = z.object({
   }).optional(),
   priority: z.number().min(0).default(0),
   status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
+  expiresAt: z.preprocess(
+    (val) => {
+      // Xử lý cả string số và number
+      const num = Number(val);
+      
+      if (!isNaN(num)) {
+        const date = new Date();
+        
+        // Phân biệt: số nhỏ là ngày, số lớn là timestamp
+        if (num < 10000) { // Giả sử < 10000 là số ngày
+          // Giới hạn tối đa 360 ngày nếu cần
+          const daysToAdd = num > 360 ? 360 : num;
+          date.setDate(date.getDate() + daysToAdd);
+          return date.toISOString();
+        } else {
+          // Số lớn: coi như timestamp
+          return new Date(num).toISOString();
+        }
+      }
+      
+      return val;
+    },
+    z.string().datetime().optional()
+  ),
 });
 
 export const PriceCalculationRequestSchema = z.object({

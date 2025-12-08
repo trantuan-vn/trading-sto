@@ -192,7 +192,6 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
 
     async verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ ok: boolean; user: any }> {
       
-
       const result = await jwtUtils.verifyJWT(token, c.env.JWT_SECRET);
       if (!result.ok) {
         throw new Error(result.error ?? ERROR_MESSAGES.AUTH.INVALID_TOKEN);

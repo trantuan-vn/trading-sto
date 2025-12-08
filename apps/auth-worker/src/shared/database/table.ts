@@ -18,8 +18,6 @@ export class GenericTable<T = any> {
     return this.getOrganizationContext();
   }
 
-  // Helper method to extract column names and values from validated data
-
   // Helper method to build WHERE clause for user/organization context
   private buildWhereClause(): { whereClause: string; params: any[] } {
     if (this.organizationContext) {
@@ -57,7 +55,11 @@ export class GenericTable<T = any> {
 
     const cursor = this.storage.sql.exec(sql, ...params);
     const results = cursor.toArray();
-    return results.length > 0 ? Number(results[0].count) : 0;
+    if (results.length === 0) {
+      return 0;
+    }
+    const firstResult = results[0];
+    return firstResult ? Number(firstResult.count) : 0;
   }
 
   // ============ BROADCAST METHODS ============   

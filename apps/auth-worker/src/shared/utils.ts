@@ -33,7 +33,7 @@ export const handleError = async (c: Context, e: any, defaultMessage: string) =>
     };
     console.error("❌ [ErrorHandler]", JSON.stringify(errorLog, null, 2));
 
-    const errorResponse = { error: `${defaultMessage}`};
+    const errorResponse = { error: `${defaultMessage}: ${message}`};
 
     const ip= getClientIp(c);
     const ipData = await c.env.NONCE_KV.get(ip);

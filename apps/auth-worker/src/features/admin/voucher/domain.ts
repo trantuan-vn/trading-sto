@@ -14,8 +14,30 @@ export const VoucherSchema = z.object({
   applicableServices: z.array(z.string()).default([]),
   applicableUsers: z.array(z.string()).default([]),
   userRoles: z.array(z.enum(['member', 'admin'])).default([]),
-  startDate: z.string(),
-  endDate: z.string(),
+  expiresAt: z.preprocess(
+    (val) => {
+      // Xử lý cả string số và number
+      const num = Number(val);
+      
+      if (!isNaN(num)) {
+        const date = new Date();
+        
+        // Phân biệt: số nhỏ là ngày, số lớn là timestamp
+        if (num < 10000) { // Giả sử < 10000 là số ngày
+          // Giới hạn tối đa 360 ngày nếu cần
+          const daysToAdd = num > 360 ? 360 : num;
+          date.setDate(date.getDate() + daysToAdd);
+          return date.toISOString();
+        } else {
+          // Số lớn: coi như timestamp
+          return new Date(num).toISOString();
+        }
+      }
+      
+      return val;
+    },
+    z.string().datetime().optional()
+  ),
   status: z.enum(['ACTIVE', 'INACTIVE', 'EXPIRED']).default('ACTIVE'),
   conditions: z.object({
     tiers: z.array(z.object({
@@ -25,7 +47,7 @@ export const VoucherSchema = z.object({
     })).optional(),
     maxCalls: z.number().min(0).optional(),
     minUsage: z.number().min(0).optional(),
-  }).optional(),
+  }).nullish(),
 });
 
 export const ApplyVoucherSchema = z.object({

@@ -1,6 +1,7 @@
 import { Context, Next } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { createApplicationService } from './application';
+import { createVersionApplicationService } from '../admin/version/application';
 import { cookieUtils } from './utils';
 import { handleError, getClientIp, handleErrorWithoutIp } from '../../shared/utils';
 import { AUTH_CONSTANTS, ERROR_MESSAGES } from './constant';
@@ -13,9 +14,14 @@ export function createAuthMiddleware(bindingName: string) {
       c.set('user', undefined);
       
       const sessionId = getCookie(c, 'sessionId');
+      if (!sessionId) {
+        throw new Error("sessionId not found");
+      }
       const token = getCookie(c, 'token');
+      if (!token) {
+        throw new Error("token not found");
+      }
       const refreshToken = getCookie(c, 'refreshToken');
-      
       // If no refresh token, clear cookies and continue
       if (!refreshToken) {
         throw new Error("refreshToken not found");
@@ -50,26 +56,6 @@ async function processAuthentication(
   }
 }
 
-// Handle token refresh flow
-async function handleTokenRefresh(
-  c: Context,
-  applicationService: any,
-  sessionId: string | undefined,
-  refreshToken: string
-): Promise<void> {
-  if (!sessionId) {
-    throw new Error("sessionId is missing");
-  }
-  const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
-  if (result.ok) {
-    cookieUtils.setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
-    cookieUtils.setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
-    c.set('user', result.user);
-  } else {
-    throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
-  }
-}
-
 // Handle token verification flow
 async function handleTokenVerification(
   c: Context,
@@ -78,10 +64,6 @@ async function handleTokenVerification(
   token: string,
   refreshToken: string
 ): Promise<void> {
-  if (!sessionId) {
-    throw new Error("sessionId is missing");
-  }
-  
   try {
     const result = await applicationService.verifyTokenUseCase(sessionId, token, refreshToken);
     if (result.ok) {
@@ -95,6 +77,25 @@ async function handleTokenVerification(
     await handleTokenRefresh(c, applicationService, sessionId, refreshToken);
   }
 }
+
+// Handle token refresh flow
+async function handleTokenRefresh(
+  c: Context,
+  applicationService: any,
+  sessionId: string | undefined,
+  refreshToken: string
+): Promise<void> {
+
+  const result = await applicationService.refreshTokenUseCase(sessionId, refreshToken);
+  if (result.ok) {
+    cookieUtils.setCookieWithOption(c, 'token', result.token, AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY);
+    cookieUtils.setCookieWithOption(c, 'refreshToken', result.refreshToken, AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY);
+    c.set('user', result.user);
+  } else {
+    throw new Error(ERROR_MESSAGES.AUTH.INVALID_REFRESH_TOKEN);
+  }
+}
+
 
 // Require authentication middleware
 export function requireAuth(c: Context) {
@@ -113,7 +114,50 @@ export function requireAdmin(c: Context) {
   }
   return user;
 }
+// Version check middleware for admin users
+export function createVersionCheckMiddleware(bindingName: string) {
+  return async (c: Context, next: Next) => {
+    try {
+      const user = requireAuth(c);
+      const versionApplicationService = createVersionApplicationService(c, bindingName);
+      await versionApplicationService.upgradeVersion(user.identifier);            
+    } catch (error) {
+      handleErrorWithoutIp(error, "Failed to upgrade version");      
+    } 
+    await next();   
+  };
+}
 
+// Security headers middleware
+export function securityHeadersMiddleware() {
+  return async (c: Context, next: Next) => {
+    await next();
+    
+    // Security headers
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('X-Frame-Options', 'DENY');
+    c.header('X-XSS-Protection', '1; mode=block');
+    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
+    
+    // CSP header
+    c.header(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;"
+    );
+  };
+}
+
+
+
+
+
+
+
+
+
+// Xem xet sau de apply dan  
 // Rate limiting middleware factory
 export function createRateLimitMiddleware() {
   return async (c: Context, next: Next) => {
@@ -175,27 +219,6 @@ export async function updateRateLimit(env: Env, ip: string): Promise<void> {
   await env.NONCE_KV.put(key, JSON.stringify(data), {
     expirationTtl: Math.ceil(AUTH_CONSTANTS.RATE_LIMIT_WINDOW / 1000) * 2
   });
-}
-
-// Security headers middleware
-export function securityHeadersMiddleware() {
-  return async (c: Context, next: Next) => {
-    await next();
-    
-    // Security headers
-    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    c.header('X-Content-Type-Options', 'nosniff');
-    c.header('X-Frame-Options', 'DENY');
-    c.header('X-XSS-Protection', '1; mode=block');
-    c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
-    
-    // CSP header
-    c.header(
-      'Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;"
-    );
-  };
 }
 
 // CORS middleware for auth endpoints
@@ -303,9 +326,13 @@ export function applyMiddleware(...middlewares: Function[]) {
       }
       
       const middleware = middlewares[i];
+      if (!middleware) {
+        throw new Error(`Middleware at index ${i} is undefined`);
+      }
       return await middleware(c, () => dispatch(i + 1));
     }
     
     return await dispatch(0);
   };
 }
+

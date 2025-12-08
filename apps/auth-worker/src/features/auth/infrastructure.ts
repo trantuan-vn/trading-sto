@@ -35,7 +35,7 @@ const createUserRepository = (userDO: DurableObjectStub<UserDO>): IUserRepositor
     const validationResult = UserSchema.parse(user);
     const existingUser = await this.get();
     
-    const operation = existingUser ? 'update' : 'create';
+    const operation = existingUser ? 'update' : 'insert';
     const payload = existingUser? {
                                     ...validationResult,
                                     id: existingUser.id
