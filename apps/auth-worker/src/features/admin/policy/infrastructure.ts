@@ -9,46 +9,49 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
   // Helper methods
   const isPolicyApplicable = (policy: any, request: PriceCalculationRequest): boolean => {
     const conditions = policy.conditions || {};
-    const now = new Date();
+    // check status
+    if (policy.status !== 'ACTIVE') {
+      throw new Error(`Policy ${policy.name} is not active.`);
+    }
+    // Check date validity
+    if (new Date(policy.expiresAt) < new Date()) {
+      throw new Error(`Policy ${policy.name} has expired.`);
+    }
 
     // Check target specific conditions
-    if (policy.targetType === 'SERVICE' && 'serviceId' in request) {
-      if (policy.targetIds?.length && !policy.targetIds.includes(request.serviceId)) {
-        return false;
+    if (policy.targetType === 'SERVICE') {
+      if (policy.targetIds && policy.targetIds.length>0 && !policy.targetIds.includes(request.serviceId)) {
+        throw new Error(`Service ${request.serviceId} is not applicable for this policy (${policy.name}), policy.targetIds is ${Array.isArray(policy.targetIds)}, policy.targetIds[0] is ${typeof policy.targetIds[0] === 'string'} , request.serviceId is ${typeof request.serviceId === 'string' }, policy.targetIds.includes(request.serviceId) is ${policy.targetIds.includes(request.serviceId)}, policy.targetIds is ${policy.targetIds}`);
       }
     }
 
-    if (policy.targetType === 'USER' && 'userId' in request) {
-      if (policy.targetIds?.length && !policy.targetIds.includes(request.userId)) {
-        return false;
+    if (policy.targetType === 'USER') {
+      if (policy.targetIds && policy.targetIds.length>0 && !policy.targetIds.includes(request.userId)) {
+        throw new Error(`User ${request.userId} is not applicable for this policy (${policy.name})`);
       }
     }
 
     // Check user role
-    if (policy.targetType === 'USER' && 'userRole' in request && conditions.userRoles) {
-      if (!conditions.userRoles.includes(request.userRole)) {
-        return false;
+    if (policy.targetType === 'USER' && conditions.userRoles) {
+      if (conditions.userRoles.length>0 && !conditions.userRoles.includes(request.userRole)) {
+        throw new Error(`User role ${request.userRole} is not applicable for this policy (${policy.name})`);
       }
     }
 
     // Check usage conditions
-    if (policy.type === 'USAGE_BASED' && 'currentCalls' in request && conditions.maxCalls) {
+    if (policy.type === 'USAGE_BASED' && conditions.maxCalls) {
       if ((request.currentCalls ?? 0) >= conditions.maxCalls) {
-        return false;
+        throw new Error(`Usage limit has been reached for this policy (${policy.name})`);
       }
     }
 
     // Check minimum quantity
-    if (conditions.minQuantity && 'quantity' in request && request.quantity) {
+    if (conditions.minQuantity && request.quantity) {
       if (request.quantity < conditions.minQuantity) {
-        return false;
+        throw new Error(`Minimum quantity is ${conditions.minQuantity} for this policy (${policy.name}).`);
       }
     }
 
-    // Check date validity
-    if (new Date(policy.expiresAt) < new Date()) {
-      return false;
-    }
 
     return true;
   };
@@ -105,10 +108,13 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
   };
 
   const calculatePrice = async (request: PriceCalculationRequest, targetType: 'SERVICE' | 'USER') => {
-    const activePolicies = await executeUtils.executeRepositorySelect(userDO,
-      'select * from price_policies where status = ? and targetType = ? order by priority desc',
-      ['ACTIVE', targetType]
+    const activePolicies = await executeUtils.executeDynamicAction(userDO,
+      'select', { 
+        where: { field: 'targetType', operator: '=', value: targetType },
+        orderBy: { field: 'priority', direction: 'DESC' } 
+      }, 'price_policies'
     );
+
 
     let finalPrice = request.basePrice;
     let totalDiscount = 0;
@@ -145,27 +151,26 @@ export function createPriceInfrastructureService(userDO: DurableObjectStub<UserD
     createPricePolicy: (request: Partial<PricePolicy>) => 
       executeUtils.executeDynamicAction(userDO, 'insert', request, 'price_policies'),
 
-    updatePricePolicy: (policyId: string, request: Partial<PricePolicy>) => 
+    updatePricePolicy: (policyId: number, request: Partial<PricePolicy>) => 
       executeUtils.executeDynamicAction(userDO, 'update', { id: policyId, ...request }, 'price_policies'),
 
     getPricePolicies: (limit: number, offset: number, status?: string) => 
-      executeUtils.executeRepositorySelect(
-        userDO,
-        `select * from price_policies ${status ? 'where status = ?' : ''} order by priority desc limit ? offset ?`,
-        status ? [status, limit, offset] : [limit, offset]
-      ),
+      executeUtils.executeDynamicAction(userDO, 'select', {
+        where: { field: "status", operator: '=', value: status ? status : "status" },
+        orderBy: { field: 'priority', direction: 'DESC' },
+        limit,
+        offset
+      }, 'price_policies'),
 
-    getPricePolicy: (policyId: string) => 
-      executeUtils.executeRepositorySelect(
-        userDO,
-        `select * from price_policies where id = ?`,
-        [policyId]
-      ),
+    getPricePolicy: (policyId: number) => 
+      executeUtils.executeDynamicAction(userDO, 'select', {
+        where: { field: "id", operator: '=', value: policyId }
+      }, 'price_policies'),
 
-    deletePricePolicy: (policyId: string) => 
+    deletePricePolicy: (policyId: number) => 
       executeUtils.executeDynamicAction(userDO, 'delete', { id: policyId }, 'price_policies'),
 
-    updatePolicyStatus: (policyId: string, status: string) => 
+    updatePolicyStatus: (policyId: number, status: string) => 
       executeUtils.executeDynamicAction(userDO, 'update', { id: policyId, status: status}, 'price_policies'),
 
     calculateServicePrice: (request: PriceCalculationRequest) => 

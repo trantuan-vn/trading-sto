@@ -34,7 +34,12 @@ export function createAuthRoutes(bindingName: string) {
         if (!ipAddress || !userAgent) {
           throw new Error('Missing IP address or user agent');
         }
-        const sessionId = getSessionIdHash(ipAddress, userAgent, c.env.ENCRYPTION_SECRET);
+        const encryptSecret= await c.env.ENCRYPTION_SECRET.get();
+        if (!encryptSecret) {
+          throw new Error("ENCRYPTION_SECRET is not defined in environment variables");
+        }
+
+        const sessionId = getSessionIdHash(ipAddress, userAgent, encryptSecret);
 
         return await handler(c, sessionId, ipAddress, userAgent);
       } catch (e) {

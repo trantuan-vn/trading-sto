@@ -17,10 +17,13 @@ import { executeUtils } from '../../../shared/utils';
 export function createAIService(env: Env, userDO: DurableObjectStub<UserDO>): IAIDocumentService {
 
   const validateServiceUsage = async (endpoint: string): Promise<any> => {
-    const service = await executeUtils.executeRepositorySelect(userDO,
-      'select * from services where endpoint = ? and isActive = ?',
-      [endpoint, 1]
-    ).then(results => results[0]);
+     
+    const service = await executeUtils.executeDynamicAction(userDO, 'select', {
+        where: [
+          { field: "endpoint", operator: '=', value: endpoint },
+          { field: "isActive", operator: '=', value: 1 }
+        ]
+      }, 'services').then(results => results[0]);
 
     if (!service) {
       throw new Error('Service not found');

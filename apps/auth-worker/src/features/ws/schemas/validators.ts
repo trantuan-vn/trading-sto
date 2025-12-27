@@ -50,8 +50,8 @@ export class BroadcastValidator {
     return z.string().min(1).max(256).safeParse(userId).success;
   }
 
-  static validateBroadcastId(broadcastId: string): boolean {
-    return z.string().min(1).max(256).safeParse(broadcastId).success;
+  static validateBroadcastId(broadcastId: number): boolean {
+    return z.number().min(1).max(256).safeParse(broadcastId).success;
   }
 }
 
@@ -105,7 +105,7 @@ export class ShardValidator {
   }
 
   static isValidUserId(userId: string): boolean {
-    return z.string().min(1).max(256).safeParse(userId).success;
+    return z.string().safeParse(userId).success;
   }
 
   static isValidShardName(shardName: string): boolean {
@@ -113,7 +113,7 @@ export class ShardValidator {
   }
 
   static isValidBroadcastId(broadcastId: string): boolean {
-    return z.string().min(1).max(256).safeParse(broadcastId).success;
+    return z.string().safeParse(broadcastId).success;
   }
 
   static validateBatchSize(batchSize: number, config: ShardConfig): boolean {

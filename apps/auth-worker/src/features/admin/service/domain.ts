@@ -34,7 +34,7 @@ export const ServiceSchema = z.object({
 });
 
 export const ServiceUsageSchema = z.object({
-  serviceId: z.string(),
+  serviceId: z.number().int(),
   endpoint: z.string(),
   userAgent: z.string().optional(),
   ipAddress: z.string().optional(),

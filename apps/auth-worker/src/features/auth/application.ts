@@ -50,8 +50,12 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     ipAddress: string,
     userAgent: string
   ) => {
-    const token = await jwtUtils.generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-    const refreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
+    const jwtSecret= await c.env.JWT_SECRET.get();
+    if (!jwtSecret) {
+      throw new Error("JWT_SECRET is not defined in environment variables");
+    }
+    const token = await jwtUtils.generateAccessToken(user.id, user.identifier, jwtSecret);
+    const refreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, jwtSecret);
 
     const sessionData: Session = {
       hashSessionId: sessionId,
@@ -69,6 +73,11 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
   };
 
   const getOrCreateUser = async (repository: any, identifier: string, additionalData: any = {}) => {
+    const encryptSecret= await c.env.ENCRYPTION_SECRET.get();
+    if (!encryptSecret) {
+      throw new Error("ENCRYPTION_SECRET is not defined in environment variables");
+    }
+
     const user = await repository.users.get();
     
     if (user) return user;
@@ -81,7 +90,7 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
 
     // Generate wallet for new users (except wallet connections)
     if (!additionalData.address) {
-      const wallet = await walletUtils.generateWallet(c.env.ENCRYPTION_SECRET);
+      const wallet = await walletUtils.generateWallet(encryptSecret);
       Object.assign(baseUser, {
         address: wallet.address,
         privateKey: wallet.privateKey,
@@ -105,7 +114,7 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       const oauthService = createOAuthService(c.env);      
       const state = await oauthService.generateState(sessionId);
 
-      const config = oauthUtils.getOAuthConfig(provider, c.env);
+      const config = await oauthUtils.getOAuthConfig(provider, c.env);
       const params = new URLSearchParams({
         client_id: config.clientId,
         redirect_uri: config.redirectUri,
@@ -191,8 +200,11 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
 
     async verifyTokenUseCase(sessionId: string, token: string, refreshToken: string): Promise<{ ok: boolean; user: any }> {
-      
-      const result = await jwtUtils.verifyJWT(token, c.env.JWT_SECRET);
+      const jwtSecret= await c.env.JWT_SECRET.get();
+      if (!jwtSecret) {
+        throw new Error("JWT_SECRET is not defined in environment variables");
+      }
+      const result = await jwtUtils.verifyJWT(token, jwtSecret);
       if (!result.ok) {
         throw new Error(result.error ?? ERROR_MESSAGES.AUTH.INVALID_TOKEN);
       }
@@ -217,7 +229,12 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
     },
 
     async refreshTokenUseCase(sessionId: string, refreshToken: string): Promise<{ ok: boolean; user: any; token: string; refreshToken: string }> {
-      const result = await jwtUtils.verifyJWT(refreshToken, c.env.JWT_SECRET);
+      const jwtSecret= await c.env.JWT_SECRET.get();
+      if (!jwtSecret) {
+        throw new Error("JWT_SECRET is not defined in environment variables");
+      }
+
+      const result = await jwtUtils.verifyJWT(refreshToken, jwtSecret);
       if (!result.ok) {
         const errorMessage = result.error
           ?.replace('token', 'refreshToken')
@@ -239,8 +256,8 @@ export function createApplicationService(c: Context, bindingName: string): IAppl
       const session = await repository.sessions.findById(sessionId);
       validationUtils.validateSession(session, undefined, refreshToken);
 
-      const newToken = await jwtUtils.generateAccessToken(user.id, user.identifier, c.env.JWT_SECRET);
-      const newRefreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, c.env.JWT_SECRET);
+      const newToken = await jwtUtils.generateAccessToken(user.id, user.identifier, jwtSecret);
+      const newRefreshToken = await jwtUtils.generateRefreshToken(user.id, user.identifier, jwtSecret);
       
       await repository.sessions.update(sessionId, { 
         token: newToken, 

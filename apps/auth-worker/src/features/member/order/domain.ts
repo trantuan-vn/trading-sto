@@ -15,27 +15,23 @@ export const OrderSchema = z.object({
   appliedVoucherCode: z.string().optional(),
   notes: z.string().optional(),
   internalNotes: z.string().optional(),
-}).refine(data => data.finalAmount >= 0, {
-  message: "Final amount cannot be negative"
 });
 
 export const OrderItemSchema = z.object({
-  orderId: z.string(),
-  serviceId: z.string(),
+  orderId: z.number().int(),
+  serviceId: z.number().int(),
   basePrice: z.number().min(0),
   discountAmount: z.number().min(0).default(0),
   finalAmount: z.number().min(0),
   quantity: z.number().min(1),
-}).refine(data => data.finalAmount >= 0, {
-  message: "Final amount cannot be negative"
 });
 
 export const OrderItemDiscountSchema = z.object({
-  orderItemId: z.string(),
+  orderItemId: z.number().int(),
   discountType: DiscountTypeSchema,
   discountAmount: z.number().min(0),
   appliedPolicies: z.array(z.object({
-    policyId: z.string(),
+    policyId: z.number().int(),
     policyName: z.string(),
     discount: z.number(),
     type: z.string(),
@@ -46,7 +42,7 @@ export const OrderItemDiscountSchema = z.object({
 
 // Request Schemas
 export const CreateOrderItemSchema = z.object({
-  serviceId: z.string().min(1, "Service ID is required"),
+  serviceId: z.number().int().min(1, "Service ID is required"),
   basePrice: z.number().min(0, "Base price must be positive"),
   quantity: z.number().min(1, "Quantity must be at least 1"),
 });
@@ -56,6 +52,7 @@ export const CreateOrderSchema = z.object({
   currency: z.string().default('VND'),
   voucherCode: z.string().optional(),
   notes: z.string().optional(),
+  paymentMethod: z.string().optional(),
 });
 
 export const UpdateOrderStatusSchema = z.object({
@@ -78,7 +75,7 @@ export const PriceCalculationResultSchema = z.object({
   finalPrice: z.number().min(0),
   totalDiscount: z.number().min(0),
   appliedPolicies: z.array(z.object({
-    policyId: z.string(),
+    policyId: z.number().int(),
     policyName: z.string(),
     discount: z.number(),
     type: z.string(),
@@ -96,7 +93,7 @@ export const DiscountDetailSchema = z.object({
     amount: z.number().min(0),
     type: z.literal('service_price'),
     appliedPolicies: z.array(z.object({
-      policyId: z.string(),
+      policyId: z.number().int(),
       policyName: z.string(),
       discount: z.number(),
       type: z.string(),
@@ -106,7 +103,7 @@ export const DiscountDetailSchema = z.object({
     amount: z.number().min(0),
     type: z.literal('user_price'),
     appliedPolicies: z.array(z.object({
-      policyId: z.string(),
+      policyId: z.number().int(),
       policyName: z.string(),
       discount: z.number(),
       type: z.string(),
@@ -125,7 +122,7 @@ export const DiscountDetailSchema = z.object({
 });
 
 export const OrderCalculationItemSchema = z.object({
-  serviceId: z.string(),
+  serviceId: z.number().int(),
   basePrice: z.number().min(0),
   quantity: z.number().min(1),
   servicePrice: PriceCalculationResultSchema,
@@ -138,6 +135,8 @@ export const OrderCalculationItemSchema = z.object({
 export const OrderCalculationResultSchema = z.object({
   items: z.array(OrderCalculationItemSchema),
 });
+
+
 
 // Types
 export type Order = z.infer<typeof OrderSchema>;
@@ -157,6 +156,26 @@ export type DiscountDetail = z.infer<typeof DiscountDetailSchema>;
 export type OrderCalculationItem = z.infer<typeof OrderCalculationItemSchema>;
 export type OrderCalculationResult = z.infer<typeof OrderCalculationResultSchema>;
 
+export interface OrderResponse {
+  success: boolean;
+  data: {
+    id: string;
+    orderCode: string;
+    items: Array<{
+      serviceId: string;
+      quantity: number;
+      basePrice: number;
+      discounts: Array<any>;
+    }>;
+    summary: {
+      subtotalAmount: number;
+      discountAmount: number;
+      finalAmount: number;
+      currency: string;
+    };
+  };
+  message: string;
+}
 export interface OrderDetail extends Order {
   items: OrderItem[];
   discounts: OrderItemDiscount[];

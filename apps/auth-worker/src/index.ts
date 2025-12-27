@@ -75,5 +75,4 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return routeApp.fetch(request, env, ctx);
   }
-}
-//} satisfies ExportedHandler<Env, Error>;
+} satisfies ExportedHandler<Env, Error>;

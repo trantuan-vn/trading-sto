@@ -9,13 +9,13 @@ import {
 
 interface IPriceApplicationService {
   createPricePolicy(identifier: string, request: PricePolicy): Promise<PricePolicy>;
-  updatePricePolicy(identifier: string, policyId: string, request: PricePolicy): Promise<PricePolicy>;
+  updatePricePolicy(identifier: string, policyId: number, request: PricePolicy): Promise<PricePolicy>;
   getPricePolicies(identifier: string, limit: number, offset: number, status?: string): Promise<PricePolicy[]>;
-  getPricePolicy(identifier: string, policyId: string): Promise<PricePolicy>;
-  deletePricePolicy(identifier: string, policyId: string): Promise<void>;
+  getPricePolicy(identifier: string, policyId: number): Promise<PricePolicy>;
+  deletePricePolicy(identifier: string, policyId: number): Promise<void>;
   calculateServicePrice(identifier: string, request: PriceCalculationRequest): Promise<any>;
   calculateUserPrice(identifier: string, request: PriceCalculationRequest): Promise<any>;
-  updatePolicyStatus(identifier: string, policyId: string, status: string): Promise<PricePolicy>;
+  updatePolicyStatus(identifier: string, policyId: number, status: string): Promise<PricePolicy>;
 }
 export function createPriceApplicationService(c: Context, bindingName: string): IPriceApplicationService {
   const getPriceInfrastructure = (identifier: string) => {
@@ -30,7 +30,7 @@ export function createPriceApplicationService(c: Context, bindingName: string): 
       return await priceInfra.createPricePolicy(request);
     },
 
-    async updatePricePolicy(identifier: string, policyId: string, request: PricePolicy): Promise<any> {
+    async updatePricePolicy(identifier: string, policyId: number, request: PricePolicy): Promise<any> {
       const priceInfra = getPriceInfrastructure(identifier);
       return await priceInfra.updatePricePolicy(policyId, request);
     },
@@ -40,12 +40,12 @@ export function createPriceApplicationService(c: Context, bindingName: string): 
       return await priceInfra.getPricePolicies(limit, offset, status);
     },
 
-    async getPricePolicy(identifier: string, policyId: string): Promise<any> {
+    async getPricePolicy(identifier: string, policyId: number): Promise<any> {
       const priceInfra = getPriceInfrastructure(identifier);
       return await priceInfra.getPricePolicy(policyId);
     },
 
-    async deletePricePolicy(identifier: string, policyId: string): Promise<void> {
+    async deletePricePolicy(identifier: string, policyId: number): Promise<void> {
       const priceInfra = getPriceInfrastructure(identifier);
       await priceInfra.deletePricePolicy(policyId);
     },
@@ -60,7 +60,7 @@ export function createPriceApplicationService(c: Context, bindingName: string): 
       return await priceInfra.calculateUserPrice(request);
     },
 
-    async updatePolicyStatus(identifier: string, policyId: string, status: string): Promise<any> {
+    async updatePolicyStatus(identifier: string, policyId: number, status: string): Promise<any> {
       const priceInfra = getPriceInfrastructure(identifier);
       const policy = await priceInfra.updatePolicyStatus(policyId, status);
       

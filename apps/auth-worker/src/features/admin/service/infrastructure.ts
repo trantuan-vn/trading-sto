@@ -9,11 +9,14 @@ export function createServiceInfrastructureService(userDO: DurableObjectStub<Use
   return {
     async registerService(request: Service): Promise<any> {
       console.log(`Registering service: ${JSON.stringify(request)}`);
-      return await executeUtils.executeDynamicAction(userDO, 'upsert', request, 'services');
+      return await executeUtils.executeDynamicAction(userDO, 'insert', request, 'services');
     },
 
     async getUserServices(): Promise<any[]> {
-      return await executeUtils.executeRepositorySelect(userDO, 'select * from services where isActive = 1 order by createdAt desc');
+      return await executeUtils.executeDynamicAction(userDO, 'select', {
+        where: { field: "isActive", operator: '=', value: 1 },
+        orderBy: { field: 'createdAt', direction: 'DESC' }
+      }, 'services')
     },
 
     async cancelService(serviceId: string): Promise<void> {
@@ -21,12 +24,14 @@ export function createServiceInfrastructureService(userDO: DurableObjectStub<Use
     },
 
     async getServiceUsage(serviceId: string, days: number = 30): Promise<any[]> {
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-      
-      return await executeUtils.executeRepositorySelect(userDO,
-        'select * from service_usages where serviceId = ? and createdAt >= ? order by createdAt desc',
-        [serviceId, cutoff]
-      );
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+      return await executeUtils.executeDynamicAction(userDO, 'select', {
+        where: [
+          { field: "serviceId", operator: '=', value: serviceId },
+          { field: "createdAt", operator: '>=', value: cutoff }
+        ],
+        orderBy: { field: 'createdAt', direction: 'DESC' }
+      }, 'service_usages')      
     },
   };
 }

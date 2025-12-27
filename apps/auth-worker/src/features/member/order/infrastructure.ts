@@ -18,20 +18,27 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     
     const results = await Promise.all(
       request.items.map(async (item) => {
-        const service = await executeUtils.executeRepositorySelect(userDO,
-          'select * from services where id = ? and isActive = ? and expires_at >= ?',
-          [item.serviceId, 1, new Date().toISOString()]
+        const service = await executeUtils.executeDynamicAction(userDO,
+          'select', { where : { field: 'id', operator: '=', value: item.serviceId } }, 'services'
         ).then(rows => rows[0]);
 
         if (!service) {
           throw new Error('Service not found');
         }
 
+        if (!service.isActive) {
+          throw new Error('Service is not active');
+        }
+        
+        if (new Date(service.expiresAt) < new Date()) {
+          throw new Error('Service expired');
+        }
+
         // Chuẩn bị các promise cho price calculation (luôn thực hiện)
         const priceData = {
             basePrice: item.basePrice,
             userId: user.id,
-            serviceId: service.id,
+            serviceId: item.serviceId,
             quantity: item.quantity,
             currency: request.currency,
             userRole: user.role,
@@ -53,7 +60,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
               voucherCode: request.voucherCode,
               basePrice: item.basePrice,
               orderAmount: orderAmount,
-              serviceId: service.id,
+              serviceId: item.serviceId,
               currentCalls: service.current_calls,
               userId: user.id,
               userRole: user.role
@@ -62,7 +69,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
               voucherCode: request.voucherCode,
               basePrice: item.basePrice,
               orderAmount: orderAmount,
-              serviceId: service.id,
+              serviceId: item.serviceId,
               currentCalls: service.current_calls,
               userId: user.id,
               userRole: user.role
@@ -126,7 +133,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     if (servicePrice.totalDiscount > 0) {
       discounts.servicePriceDiscount = {
         amount: servicePrice.totalDiscount,
-        type: 'service_price',
+        type: 'SERVICE_PRICE',
         appliedPolicies: servicePrice.appliedPolicies
       };
     }
@@ -134,7 +141,7 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     if (userPrice.totalDiscount > 0) {
       discounts.userPriceDiscount = {
         amount: userPrice.totalDiscount,
-        type: 'user_price',
+        type: 'USER_PRICE',
         appliedPolicies: userPrice.appliedPolicies
       };
     }
@@ -142,16 +149,16 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     if (serviceVoucher.discountAmount > 0) {
       discounts.serviceVoucherDiscount = {
         amount: serviceVoucher.discountAmount,
-        type: 'service_voucher',
-        voucher: serviceVoucher.voucher
+        type: 'SERVICE_VOUCHER',
+        voucher: serviceVoucher.voucher.code
       };
     }
     
     if (userVoucher.discountAmount > 0) {
       discounts.userVoucherDiscount = {
         amount: userVoucher.discountAmount,
-        type: 'user_voucher',
-        voucher: userVoucher.voucher
+        type: 'USER_VOUCHER',
+        voucher: userVoucher.voucher.code
       };
     }
 
@@ -259,25 +266,19 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     },
 
     async getOrders(filters: any): Promise<any[]> {
-      let sql = 'select * from orders where 1=1';
-      const params: any[] = [];
-
-      if (filters.status) {
-        sql += ' and status = ?';
-        params.push(filters.status);
-      }
-
-      sql += ' order by created_at desc limit ? offset ?';
-      params.push(filters.limit, (filters.page - 1) * filters.limit);
-
-      const orders = await executeUtils.executeRepositorySelect(userDO, sql, params);
+      
+      const orders = await executeUtils.executeDynamicAction(userDO, 'select', {
+        where: { field: "status", operator: '=', value: filters.status },
+        orderBy: { field: 'created_at', direction: 'DESC' },
+        limit: filters.limit,
+        offset: (filters.page - 1) * filters.limit
+      }, 'orders')      
 
       const ordersWithItems = await Promise.all(
-        orders.map(async (order) => {
-          const items = await executeUtils.executeRepositorySelect(userDO,
-            'select * from order_items where order_id = ?',
-            [order.id]
-          );
+        orders.map(async (order: any) => {
+          const items = await executeUtils.executeDynamicAction(userDO, 'select', {
+            where: { field: "order_id", operator: '=', value: order.id }
+          }, 'order_items') 
           return { ...order, items };
         })
       );
@@ -286,22 +287,21 @@ export function createOrderInfrastructureService(userDO: DurableObjectStub<UserD
     },
 
     async getOrderDetail(orderId: string): Promise<any> {
-      const [order] = await executeUtils.executeRepositorySelect(userDO,
-        'select * from orders where id = ?',
-        [orderId]
-      );
+      const order = await executeUtils.executeDynamicAction(userDO, 'select', {
+            where: { field: "id", operator: '=', value: orderId }
+          }, 'orders').then((res: any) => res[0]);
 
       if (!order) {
         throw new Error('Order not found');
       }
 
       const [items, discounts] = await Promise.all([
-        executeUtils.executeRepositorySelect(userDO, 'select * from order_items where order_id = ?', [orderId]),
+        executeUtils.executeRepositorySelect(userDO, 'select * from order_items where order_id = ?', [orderId], "order_items"),
         executeUtils.executeRepositorySelect(userDO,
           `select od.* from order_discounts od 
            join order_items oi on od.order_item_id = oi.id 
            where oi.order_id = ?`,
-          [orderId]
+          [orderId], "order_discounts"
         )
       ]);
 

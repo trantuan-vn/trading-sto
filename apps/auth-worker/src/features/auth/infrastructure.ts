@@ -27,7 +27,7 @@ import { executeUtils } from '../../shared/utils';
 // User Repository Implementation
 const createUserRepository = (userDO: DurableObjectStub<UserDO>): IUserRepository => ({
   async get(): Promise<any> {
-    const user = await executeUtils.executeRepositorySelect(userDO, 'select * from users');
+    const user = await executeUtils.executeDynamicAction(userDO, 'select', {}, 'users')
     return user[0] || null;
   },
 
@@ -61,10 +61,12 @@ const createSessionRepository = (userDO: DurableObjectStub<UserDO>): ISessionRep
   },
 
   async findById(sessionId: string): Promise<any> {
-    const session = await executeUtils.executeRepositorySelect(userDO,
-        'select * from sessions where hashSessionId = ? and isActive = ?',
-        [sessionId, 1]
-      );    
+    const session = await executeUtils.executeDynamicAction(userDO, 'select', {
+        where: [
+          { field: "hashSessionId", operator: '=', value: sessionId },
+          { field: "isActive", operator: '=', value: 1 }
+        ]
+      }, 'sessions')    
     return session[0] || null;
   },
 
@@ -148,6 +150,11 @@ export function createOTPService(env: Env): IOTPService {
   const kvService = createKvService(env);
   
   const sendEmail = async (email: string, otp: string): Promise<void> => {
+    const emailApiKey= await env.EMAIL_API_KEY.get();
+    if (!emailApiKey) {
+      throw new Error("JWT_SECRET is not defined in environment variables");
+    }
+
     const emailData = {
       personalizations: [{ to: [{ email }], subject: "Your OTP Code" }],
       from: { email: "noreply@unitoken.trade", name: "Unitoken Auth" },
@@ -165,7 +172,7 @@ export function createOTPService(env: Env): IOTPService {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${env.EMAIL_API_KEY}`,
+        Authorization: `Bearer ${emailApiKey}`,
       },
       body: JSON.stringify(emailData),
     });
@@ -177,6 +184,18 @@ export function createOTPService(env: Env): IOTPService {
 
   const sendSMS = async (phone: string, otp: string, provider: string): Promise<void> => {
     let response: Response | null = null;
+    const accountId= await env.TWILIO_ACCOUNT_SID.get();
+    const authToken= await env.TWILIO_AUTH_TOKEN.get();
+    if (!accountId || !authToken) {
+      throw new Error("TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN is not defined in environment variables");
+    }
+    const apiKey= await env.VONAGE_API_KEY.get();
+    const apiSecret= await env.VONAGE_API_SECRET.get();
+    if (!accountId || !authToken) {
+      throw new Error("TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN is not defined in environment variables");
+    }
+
+
 
     switch (provider.toUpperCase()) {
       case "TWILIO": {
@@ -186,9 +205,9 @@ export function createOTPService(env: Env): IOTPService {
           Body: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
         });
 
-        const auth = btoa(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`);
+        const auth = btoa(`${accountId}:${authToken}`);
         response = await fetch(
-          `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,
+          `https://api.twilio.com/2010-04-01/Accounts/${accountId}/Messages.json`,
           {
             method: "POST",
             headers: {
@@ -207,7 +226,7 @@ export function createOTPService(env: Env): IOTPService {
           text: `Your OTP code is: ${otp}. This code will expire in 10 minutes.`,
         });
 
-        const auth = btoa(`${env.VONAGE_API_KEY}:${env.VONAGE_API_SECRET}`);
+        const auth = btoa(`${apiKey}:${apiSecret}`);
         response = await fetch("https://rest.nexmo.com/sms/json", {
           method: "POST",
           headers: {
@@ -441,12 +460,12 @@ export function createOAuthService(env: Env): IOAuthService {
         throw new Error('Invalid OAuth state');
       }
 
-      const config = oauthUtils.getOAuthConfig(provider, env);
+      const config = await oauthUtils.getOAuthConfig(provider, env);
       return await exchangeCodeForToken(code, config);
     },
 
     async getUserInfoFromProvider(provider: string, accessToken: string): Promise<any> {
-      const config = oauthUtils.getOAuthConfig(provider, env);
+      const config = await oauthUtils.getOAuthConfig(provider, env);
       return await fetchUserInfo(provider, accessToken, config);
     }
   };

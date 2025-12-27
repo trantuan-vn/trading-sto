@@ -64,7 +64,7 @@ export const jwtUtils = {
   },
 
   async generateAccessToken(
-    userId: string, 
+    userId: number, 
     identifier: string, 
     secret: string, 
     expiresInSeconds: number = AUTH_CONSTANTS.ACCESS_TOKEN_EXPIRY
@@ -72,7 +72,7 @@ export const jwtUtils = {
     const iat = Math.floor(Date.now() / 1000);
     const exp = iat + expiresInSeconds;
     return await this.signJWT({
-      sub: userId,
+      sub: String(userId),
       identifier: identifier.toLowerCase(),
       iat,
       exp,
@@ -81,7 +81,7 @@ export const jwtUtils = {
   },
 
   async generateRefreshToken(
-    userId: string,
+    userId: number,
     identifier: string, 
     secret: string,
     expiresInSeconds: number = AUTH_CONSTANTS.REFRESH_TOKEN_EXPIRY
@@ -90,7 +90,7 @@ export const jwtUtils = {
     const exp = iat + expiresInSeconds;
     
     return await this.signJWT({
-      sub: userId,
+      sub: String(userId),
       identifier: identifier.toLowerCase(),
       iat,
       exp,
@@ -228,39 +228,64 @@ export const oauthUtils = {
     return scopes[provider];
   },
 
-  getOAuthConfig(provider: string, env?: Env): OAuthConfig {
+  async getOAuthConfig(provider: string, env: Env): Promise<OAuthConfig> {
+    const googleClientId= await env.GOOGLE_CLIENT_ID.get();    
+    const googleClientSecret= await env.GOOGLE_CLIENT_SECRET.get();
+    if (!googleClientId || !googleClientSecret) {
+      throw new Error("GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET are not defined in environment variables");
+    }
+    const appleClientId= await env.APPLE_CLIENT_ID.get();
+    const appleClientSecret= await env.APPLE_CLIENT_SECRET.get();
+    if (!appleClientId || !appleClientSecret) {
+      throw new Error("APPLE_CLIENT_ID or APPLE_CLIENT_SECRET are not defined in environment variables");
+    }
+    const facebookClientId= await env.FACEBOOK_CLIENT_ID.get();
+    const facebookClientSecret= await env.FACEBOOK_CLIENT_SECRET.get();
+    if (!facebookClientId || !facebookClientSecret) {
+      throw new Error("FACEBOOK_CLIENT_ID or FACEBOOK_CLIENT_SECRET are not defined in environment variables");
+    }
+    const githubClientId= await env.GITHUB_CLIENT_ID.get();
+    const githubClientSecret= await env.GITHUB_CLIENT_SECRET.get();
+    if (!githubClientId || !githubClientSecret) {
+      throw new Error("GITHUB_CLIENT_ID or GITHUB_CLIENT_SECRET are not defined in environment variables");
+    }
+    const twitterClientId= await env.TWITTER_CLIENT_ID.get();
+    const twitterClientSecret= await env.TWITTER_CLIENT_SECRET.get();
+    if (!twitterClientId || !twitterClientSecret) {
+      throw new Error("TWITTER_CLIENT_ID or TWITTER_CLIENT_SECRET are not defined in environment variables");
+    }
     const configs: { [key: string]: OAuthConfig } = {
       google: {
-        clientId: env?.GOOGLE_CLIENT_ID || "",
-        clientSecret: env?.GOOGLE_CLIENT_SECRET || "",
+        clientId: googleClientId,
+        clientSecret: googleClientSecret,
         tokenEndpoint: 'https://oauth2.googleapis.com/token',
         userInfoEndpoint: 'https://www.googleapis.com/oauth2/v3/userinfo',
         redirectUri: `${env?.BASE_URL || ""}/api/oauth/google/callback`
       },
       apple: {
-        clientId: env?.APPLE_CLIENT_ID || "",
-        clientSecret: env?.APPLE_CLIENT_SECRET || "",
+        clientId: appleClientId,
+        clientSecret: appleClientSecret,
         tokenEndpoint: 'https://appleid.apple.com/auth/token',
         userInfoEndpoint: 'https://appleid.apple.com/auth/userinfo',
         redirectUri: `${env?.BASE_URL || ""}/api/oauth/apple/callback`
       },
       facebook: {
-        clientId: env?.FACEBOOK_CLIENT_ID || "",
-        clientSecret: env?.FACEBOOK_CLIENT_SECRET || "",
+        clientId: facebookClientId,
+        clientSecret: facebookClientSecret,
         tokenEndpoint: 'https://graph.facebook.com/v18.0/oauth/access_token',
         userInfoEndpoint: 'https://graph.facebook.com/me?fields=id,name,email',
         redirectUri: `${env?.BASE_URL || ""}/api/oauth/facebook/callback`
       },
       github: {
-        clientId: env?.GITHUB_CLIENT_ID || "",
-        clientSecret: env?.GITHUB_CLIENT_SECRET || "",
+        clientId: githubClientId,
+        clientSecret: githubClientSecret,
         tokenEndpoint: 'https://github.com/login/oauth/access_token',
         userInfoEndpoint: 'https://api.github.com/user',
         redirectUri: `${env?.BASE_URL || ""}/api/oauth/github/callback`
       },
       twitter: {
-        clientId: env?.TWITTER_CLIENT_ID || "",
-        clientSecret: env?.TWITTER_CLIENT_SECRET || "",
+        clientId: twitterClientId,
+        clientSecret: twitterClientSecret,
         tokenEndpoint: 'https://api.x.com/2/oauth2/token',
         userInfoEndpoint: 'https://api.x.com/2/users/me',
         redirectUri: `${env?.BASE_URL || ""}/api/oauth/twitter/callback`

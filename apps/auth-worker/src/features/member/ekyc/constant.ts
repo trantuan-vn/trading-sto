@@ -1,21 +1,21 @@
 export const EKYC_SERVICES = {
   DOCUMENT: {
     RECOGNIZE: {
-      path: '/ekyc/recognize-document',
+      path: '/api/ekyc/recognize-document',
       price: 1000
     }
   },
   FACE: {
     SEARCH: {
-      path: '/ekyc/face-search',
+      path: '/api/ekyc/face-search',
       price: 1000
     },
     LIVENESS: {
-      path: '/ekyc/face-liveness',
+      path: '/api/ekyc/face-liveness',
       price: 1000
     },
     VERIFY: {
-      path: '/ekyc/face-verify',
+      path: '/api/ekyc/face-verify',
       price: 1000
     }
   }

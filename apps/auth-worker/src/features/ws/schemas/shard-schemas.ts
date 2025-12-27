@@ -34,7 +34,7 @@ export const ShardStorageSchema = z.object({
 
 // User Management
 export const UserRegistrationSchema = z.object({
-  userId: z.string().min(1).max(256),
+  userId: z.string(),
   shardName: z.string(),
   segment: z.string().optional(),
   tags: z.array(z.string()).default([]),
@@ -43,7 +43,7 @@ export const UserRegistrationSchema = z.object({
 });
 
 export const UserBatchSchema = z.object({
-  batchId: z.string().uuid(),
+  batchId: z.string(),
   userIds: z.array(z.string().min(1).max(256)),
   shardName: z.string(),
   createdAt: z.number().int().positive(),
@@ -54,7 +54,7 @@ export const UserBatchSchema = z.object({
 
 // Broadcast Processing
 export const BroadcastTriggerSchema = z.object({
-  broadcastId: z.string().regex(/^broadcast_\d+_[a-z0-9]{9}$/),
+  broadcastId: z.number().int(),
   targetUsers: z.array(z.string()).optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
   staggerWindow: z.number().int().nonnegative().optional(),
@@ -67,7 +67,7 @@ export const BatchProcessingSchema = z.object({
   batchIndex: z.number().int().nonnegative(),
   totalBatches: z.number().int().positive(),
   userIds: z.array(z.string()),
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   scheduledTime: z.number().int().positive(),
   baseDelay: z.number().int().nonnegative(),
   staggerDelay: z.number().int().nonnegative(),
@@ -78,7 +78,7 @@ export const BatchProcessingSchema = z.object({
 
 export const UserAlarmSchema = z.object({
   userId: z.string(),
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   alarmTime: z.number().int().positive(),
   baseDelay: z.number().int().nonnegative(),
   staggerDelay: z.number().int().nonnegative(),

@@ -255,11 +255,11 @@ export const executeUtils = {
     }
   },
 
-  async executeRepositorySelect(userDO: DurableObjectStub<UserDO>, sql: string, params: any[] = []): Promise<any[]> {
+  async executeRepositorySelect(userDO: DurableObjectStub<UserDO>, sql: string, params: any[] = [], table?: string): Promise<any[]> {
     const response = await userDO.fetch('http://user.internal/repository/select', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql, params })
+      body: JSON.stringify({ sql, params, table: table || '' })
     });
 
     if (!response.ok) {

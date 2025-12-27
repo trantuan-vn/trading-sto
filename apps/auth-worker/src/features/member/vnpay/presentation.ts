@@ -10,14 +10,15 @@ export function createPaymentRoutes(bindingName: string) {
   // Helper function để xử lý route chung
   const createRouteHandler = (
     handler: Function, 
-    errorMessage: string
+    errorMessage: string,
+    isErrorReturn: boolean = true
   ) => {
     return async (c: any) => {
       try {
         return await handler(c);
       } catch (e) {
         const { errorResponse, status } = await handleError(c, e, errorMessage);
-        return c.json(errorResponse, status);
+        if (isErrorReturn) return c.json(errorResponse, status);
       }
     };
   };
@@ -67,7 +68,7 @@ export function createPaymentRoutes(bindingName: string) {
       RspCode: result.code,
       Message: result.message
     });
-  }, PAYMENT_ERROR_MESSAGES.INVALID_REQUEST));
+  }, PAYMENT_ERROR_MESSAGES.INVALID_REQUEST, false));
 
   // Query transaction
   app.post('/querydr', createRouteHandler(async (c: any) => {

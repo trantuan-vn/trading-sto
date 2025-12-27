@@ -12,7 +12,20 @@ export const paymentUtils = {
     
     return sorted;
   },
-
+  getTransactionStatusMessage(transactionStatus: string): string {
+    const messages: Record<string, string> = {
+      '00': 'Giao dịch thành công',
+      '01': 'Giao dịch chưa hoàn tất',
+      '02': 'Giao dịch bị lỗi',
+      '04': 'Giao dịch đảo (Khách hàng đã bị trừ tiền tại Ngân hàng nhưng GD chưa thành công ở VNPAY)',
+      '05': 'VNPAY đang xử lý giao dịch này (GD hoàn tiền)',
+      '06': 'VNPAY đã gửi yêu cầu hoàn tiền sang Ngân hàng (GD hoàn tiền)',
+      '07': 'Giao dịch bị nghi ngờ gian lận',
+      '09': 'GD Hoàn trả bị từ chối'
+    };
+    
+    return messages[transactionStatus] || 'Mã lỗi không xác định';
+  },
   getResponseMessage(responseCode: string): string {
     const messages: Record<string, string> = {
       '00': 'Giao dịch thành công',
@@ -60,16 +73,21 @@ export const paymentUtils = {
     return messages[responseCode] || 'Unknown error';
   },
 
-  createPaymentReference(identifier: string, paymentId: string): string {
-    return `${identifier}&${paymentId}`;
+  createPaymentReference(identifier: string, paymentId: number, orderId: number): string {
+    return `${identifier}.${paymentId}.${orderId}`;
   },
 
-  parsePaymentReference(txnRef: string): { identifier: string; paymentId: string } {
-    const [identifier, paymentId] = txnRef.split('&');
-    if (!identifier || !paymentId) {
-      throw new Error('Invalid payment reference');
+  parsePaymentReference(txnRef: string): { identifier: string; paymentId: number; orderId: number } {
+    const splitData = txnRef.split('.');
+    if (splitData.length !== 3) {
+      throw new Error('Invalid payment reference: missing required fields');
     }
-    return { identifier, paymentId };
+    
+    return {
+      identifier: splitData[0],
+      paymentId: parseInt(splitData[1]),
+      orderId: parseInt(splitData[2])
+    };          
   },
 
   validateAmount(amount: number): void {

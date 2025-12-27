@@ -22,11 +22,19 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
       },
 
       async hashToken(token: string): Promise<string> {
-        return await tokenGenerationUtils.hashToken(token, env.JWT_SECRET);
+        const jwtSecret= await env.JWT_SECRET.get();
+        if (!jwtSecret) {
+          throw new Error("JWT_SECRET is not defined in environment variables");
+        }
+        return await tokenGenerationUtils.hashToken(token, jwtSecret);
       },
 
       async verifyToken(token: string, hash: string): Promise<boolean> {
-        return await tokenGenerationUtils.verifyToken(token, hash, env.JWT_SECRET);
+        const jwtSecret= await env.JWT_SECRET.get();
+        if (!jwtSecret) {
+          throw new Error("JWT_SECRET is not defined in environment variables");
+        }
+        return await tokenGenerationUtils.verifyToken(token, hash, jwtSecret);
       },
     };
   };
@@ -89,7 +97,7 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
       isActive: true,
     };
 
-    const createdToken = await executeUtils.executeDynamicAction(userDO, 'insert', apiToken);
+    const createdToken = await executeUtils.executeDynamicAction(userDO, 'insert', apiToken, 'api_tokens');
     
     return { 
       apiToken: createdToken, 
@@ -100,17 +108,17 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
   const getUserTokens = async (): Promise<any[]> => {
     const tokens = await executeUtils.executeRepositorySelect(userDO,
       'SELECT * FROM api_tokens WHERE isActive = ? ORDER BY created_at DESC',
-      [1]
+      [1], "api_tokens"
     );
     
     return sanitizeTokenForResponse(tokens);
   };
 
-  const revokeToken = async (tokenId: string): Promise<void> => {    
+  const revokeToken = async (tokenId: number): Promise<void> => {    
     await executeUtils.executeDynamicAction(userDO, 'update', { 
       id: tokenId, 
       data: { isActive: false } 
-    });
+    }, 'api_tokens');
   };
 
   const revokeAllTokens = async (): Promise<void> => {
@@ -123,9 +131,14 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
   };
 
   const validateToken = async (token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }> => {    
+    const jwtSecret= await env.JWT_SECRET.get();
+    if (!jwtSecret) {
+      throw new Error("JWT_SECRET is not defined in environment variables");
+    }
+
     const allTokens = await executeUtils.executeRepositorySelect(userDO,
-      'SELECT * FROM api_tokens WHERE isActive = ? and expiresAt >= ? and tokenHash = ?',
-      [1, new Date().toISOString(), tokenGenerationUtils.hashToken(token, env.JWT_SECRET)]
+      "SELECT * FROM api_tokens WHERE isActive = ? and datetime(expiresAt) >= datetime('now') and tokenHash = ?",
+      [1, tokenGenerationUtils.hashToken(token, jwtSecret)], "api_tokens"
     );
     if (allTokens.length === 0) {
       return { 
@@ -146,7 +159,7 @@ export function createApiTokenService(env:Env, userDO: DurableObjectStub<UserDO>
     getUserApiTokens: () => 
       getUserTokens(),
 
-    revokeApiToken: (tokenId: string) => 
+    revokeApiToken: (tokenId: number) => 
       revokeToken(tokenId),
 
     revokeAllApiTokens: () => 

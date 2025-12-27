@@ -22,7 +22,7 @@ export const CreateApiTokenSchema = z.object({
 });
 
 export const RevokeApiTokenSchema = z.object({
-  tokenId: z.string(),
+  tokenId: z.number().int(),
 });
 
 export const ValidateApiTokenSchema = z.object({
@@ -38,7 +38,7 @@ export type ValidateApiToken = z.infer<typeof ValidateApiTokenSchema>;
 // Domain Interfaces
 export interface IApiTokenService {
   createApiToken(identifier: string, request: CreateApiToken): Promise<{apiToken: any, rawToken: string}>;
-  revokeApiToken(tokenId: string): Promise<void>;
+  revokeApiToken(tokenId: number): Promise<void>;
   revokeAllApiTokens(): Promise<void>;
   getUserApiTokens(): Promise<any[]>;
   validateApiToken(token: string): Promise<{ isValid: boolean; token?: ApiToken; error?: string }>;

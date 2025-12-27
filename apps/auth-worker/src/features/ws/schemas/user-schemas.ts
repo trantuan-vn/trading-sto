@@ -14,7 +14,8 @@ export const PendingMessageSchema = z.object({
   attempts: z.number().min(0).default(0),
   maxAttempts: z.number().min(1).default(3),
   lastAttempt: z.number().optional(),
-  scheduledFor: z.number().optional()
+  scheduledFor: z.number().optional(),
+  sessionId: z.string().uuid(),
 });
 
 export const SubscriptionSchema = z.object({

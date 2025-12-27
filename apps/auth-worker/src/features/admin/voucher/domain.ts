@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 // Schemas
 export const VoucherSchema = z.object({
-  code: z.string().min(3).max(20),
-  name: z.string().min(1).max(100),
+  code: z.string().min(3).max(50),
+  name: z.string().min(1).max(300),
   type: z.enum(['PERCENTAGE', 'FIXED_AMOUNT', 'USAGE_BASED', 'TIERED']),
   discountValue: z.number().min(0),
   minOrderAmount: z.number().min(0).optional(),
@@ -11,8 +11,8 @@ export const VoucherSchema = z.object({
   usageLimit: z.number().min(1).optional(),
   usedCount: z.number().min(0).default(0),
   targetType: z.enum(['SERVICE', 'USER', 'BOTH']).default('BOTH'),
-  applicableServices: z.array(z.string()).default([]),
-  applicableUsers: z.array(z.string()).default([]),
+  applicableServices: z.array(z.number()).optional(),
+  applicableUsers: z.array(z.number()).optional(),
   userRoles: z.array(z.enum(['member', 'admin'])).default([]),
   expiresAt: z.preprocess(
     (val) => {
@@ -54,9 +54,9 @@ export const ApplyVoucherSchema = z.object({
   voucherCode: z.string().min(3).max(20),
   basePrice: z.number().min(0),
   orderAmount: z.number().min(0),
-  serviceId: z.string().optional(),
+  serviceId: z.number().int().optional(),
   currentCalls: z.number().min(0).optional(),
-  userId: z.string().optional(),
+  userId: z.number().int().optional(),
   userRole: z.enum(['member', 'admin']).optional(),
 });
 
@@ -64,9 +64,9 @@ export const ValidateVoucherRequestSchema = z.object({
   voucherCode: z.string().min(3).max(20),
   basePrice: z.number().min(0),
   orderAmount: z.number().min(0),
-  serviceId: z.string().optional(),
+  serviceId: z.number().int().optional(),
   currentCalls: z.number().min(0).optional(),
-  userId: z.string().optional(),
+  userId: z.number().int().optional(),
   userRole: z.enum(['member', 'admin']).optional(),
 });
 

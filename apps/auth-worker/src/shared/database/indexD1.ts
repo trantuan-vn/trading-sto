@@ -1,17 +1,17 @@
 import { z } from 'zod';
-import { GenericTable } from './table.js';
+import { GenericTable } from './tableD1.js';
 
 export interface TableOptions {
   userScoped?: boolean;
   organizationScoped?: boolean;
   indexes?: string[];
-  uniqueIndexes?: string[]; // Thêm unique indexes
+  uniqueIndexes?: string[];
   autoFields?: {
     id?: boolean;
     timestamps?: boolean;
     user?: boolean;
     organization?: boolean;
-    queue?: boolean; // Thêm hỗ trợ queue
+    queue?: boolean;
   };
   conflictField?: string;
 }
@@ -62,11 +62,9 @@ export class DynamicSchemaManager {
     const insertFields = Object.keys(insertData);
     const insertPlace = insertFields.map(() => '?').join(', ');
     
-    // Sử dụng excluded values cho UPDATE
     const updateFields = Object.keys(updateData).filter(field => field !== conflictField);
     const setUpdateClause = updateFields.map(field => `"${field}" = ?`).join(', ');
     
-    // Tạo values cho INSERT, UPDATE
     let values = insertFields.map(field => insertData[field]);
     values.push(...updateFields.map(field => updateData[field]));
     
@@ -89,7 +87,6 @@ export class DynamicSchemaManager {
     let sql = `SELECT * FROM "${table}"`;
     const params: any[] = [];
 
-    // Xử lý where clause
     if (where) {
       const conditions = Array.isArray(where) ? where : [where];
       
@@ -105,12 +102,10 @@ export class DynamicSchemaManager {
       }
     }
 
-    // Xử lý order by
     if (orderBy) {
       sql += ` ORDER BY "${orderBy.field}" ${orderBy.direction}`;
     }
 
-    // Xử lý limit và offset
     if (limit !== undefined) {
       sql += ` LIMIT ?`;
       params.push(limit);
@@ -147,19 +142,18 @@ export class DynamicSchemaManager {
 }
 
 export class SchemaTypeChecker {
-  // Factory method tạo các checker cụ thể
   static isNumberSchema = SchemaTypeChecker.createChecker(z.ZodNumber);
   static isDateSchema = SchemaTypeChecker.createChecker(z.ZodDate);
   static isBooleanSchema = SchemaTypeChecker.createChecker(z.ZodBoolean);
   static isStringSchema = SchemaTypeChecker.createChecker(z.ZodString);  
   static isArraySchema = SchemaTypeChecker.createChecker(z.ZodArray);
   static isObjectSchema = SchemaTypeChecker.createChecker(z.ZodObject);
-  static isRecordSchema = SchemaTypeChecker.createChecker(z.ZodRecord); // Thêm cho ZodRecord
+  static isRecordSchema = SchemaTypeChecker.createChecker(z.ZodRecord);
   static isEnumSchema = SchemaTypeChecker.createChecker(z.ZodEnum);
   static isNativeEnumSchema = SchemaTypeChecker.createChecker(z.ZodNativeEnum);
   static isUnionSchema = SchemaTypeChecker.createChecker(z.ZodUnion);
   static isIntersectionSchema = SchemaTypeChecker.createChecker(z.ZodIntersection);
-  static isMapSchema = SchemaTypeChecker.createChecker(z.ZodMap); // Thêm cho ZodMap
+  static isMapSchema = SchemaTypeChecker.createChecker(z.ZodMap);
   
   private static createChecker<T extends z.ZodTypeAny>(targetType: abstract new (...args: any[]) => T) {
     return (schema: z.ZodTypeAny): boolean => {
@@ -202,16 +196,15 @@ export class DynamicDataBuilder {
     const preprocessedData = this.preprocessData(data, schema);
     let processedData = schema.parse(preprocessedData);
 
-    // Auto-generate fields based on configuration
     if (options.autoFields) {
       const now = Date.now();
 
       if (options.autoFields.id && context.operation === 'create' && !processedData.id) {
         if (context.getNextId) {
-          // Lấy ID tự tăng từ storage
           processedData.id = await context.getNextId(context.tableName || '');
         } else {
-          throw new Error('getNextId function is required for auto-increment IDs');
+          // For D1, we can use SQLite AUTOINCREMENT instead
+          delete processedData.id; // Let D1 handle auto-increment
         }
       }
 
@@ -230,21 +223,16 @@ export class DynamicDataBuilder {
         processedData.organization_id = context.organizationId;
       }
 
-      // Kiểm tra và xử lý queue logic
       if (options.autoFields.queue && context.getNextId && context.tableName) {
         await this.handleQueueLogic(processedData, context);
       }
     }
 
-    // Transform data types for SQL storage
     processedData = this.transformData(processedData, schema);
 
     return processedData;
   }
 
-  /**
-   * Xử lý logic queue: nếu queueStatus = 'pending' thì tạo queueId
-   */
   private static async handleQueueLogic(
     data: any,
     context: {
@@ -252,9 +240,7 @@ export class DynamicDataBuilder {
       tableName?: string;
     }
   ): Promise<void> {
-    // Kiểm tra nếu có trường queueStatus và giá trị là 'pending'
     if (data.queueStatus === 'pending' && context.getNextId && context.tableName) {
-      // Tạo queueId mới
       data.queueId = await context.getNextId(`${context.tableName}_queue`);
     }
   }
@@ -268,23 +254,19 @@ export class DynamicDataBuilder {
       const fieldSchema = schemaShape[key];
 
       if (fieldSchema) {
-        // Auto JSON stringify cho record/object/array/map fields
         if (this.isJsonSerializableSchema(fieldSchema) && value !== null && value !== undefined) {
           if (typeof value === 'object' || Array.isArray(value)) {
             transformed[key] = JSON.stringify(value);
           }
         }        
-        // Convert boolean to integer for SQLite (nhất quán với parseFromDatabase)
         if (SchemaTypeChecker.isBooleanSchema(fieldSchema) && typeof value === 'boolean') {
           transformed[key] = value ? 1 : 0;
         }
         
-        // Convert Date to timestamp
         if (SchemaTypeChecker.isDateSchema(fieldSchema) && value instanceof Date) {
           transformed[key] = value.getTime();
         }
 
-        // Đảm bảo number được lưu đúng
         if (SchemaTypeChecker.isNumberSchema(fieldSchema) && typeof value === 'string') {
           const num = Number(value);
           if (!isNaN(num)) {
@@ -292,7 +274,6 @@ export class DynamicDataBuilder {
           }
         }
 
-        // Xử lý Map - chuyển thành object trước khi stringify
         if (SchemaTypeChecker.isMapSchema(fieldSchema) && value instanceof Map) {
           const obj = Object.fromEntries(value);
           transformed[key] = JSON.stringify(obj);
@@ -308,7 +289,6 @@ export class DynamicDataBuilder {
 
     const parsed = { ...data };
     
-    // Bước 1: Pre-process - chuyển tất cả null thành undefined
     Object.keys(parsed).forEach(key => {
       if (parsed[key] === null) {
         parsed[key] = undefined;
@@ -317,22 +297,18 @@ export class DynamicDataBuilder {
 
     const schemaShape = schema instanceof z.ZodObject ? schema.shape : {};
 
-    // Bước 2: Type conversion
     Object.keys(parsed).forEach(key => {
       const value = parsed[key];
       const fieldSchema = schemaShape[key];
 
-      // Bỏ qua nếu undefined (đã xử lý ở trên)
       if (value === undefined || !fieldSchema) {
         return;
       }
 
-      // Xử lý object/array/record/map từ JSON string
       if (typeof value === 'string' && this.isJsonSerializableSchema(fieldSchema)) {
         try {
           const potentialJson = JSON.parse(value);
           if (Array.isArray(potentialJson) || typeof potentialJson === 'object') {
-            // Xử lý đặc biệt cho Map
             if (SchemaTypeChecker.isMapSchema(fieldSchema)) {
               parsed[key] = new Map(Object.entries(potentialJson));
             } else {
@@ -340,11 +316,10 @@ export class DynamicDataBuilder {
             }
           }
         } catch {
-          // Not JSON, giữ nguyên string
+          // Not JSON
         }
       }
       
-      // Xử lý boolean
       if (SchemaTypeChecker.isBooleanSchema(fieldSchema)) {
         if (typeof value === 'number') {
           parsed[key] = value === 1;
@@ -353,7 +328,6 @@ export class DynamicDataBuilder {
         }
       }
       
-      // Xử lý number
       if (SchemaTypeChecker.isNumberSchema(fieldSchema)) {
         if (typeof value === 'string') {
           const num = Number(value);
@@ -363,7 +337,6 @@ export class DynamicDataBuilder {
         }
       }
       
-      // Xử lý date
       if (SchemaTypeChecker.isDateSchema(fieldSchema)) {
         if (typeof value === 'number') {
           parsed[key] = new Date(value);
@@ -379,28 +352,20 @@ export class DynamicDataBuilder {
     return schema.parse(parsed);
   }  
 
-  // Helper methods
   private static isJsonSerializableSchema(schema: z.ZodTypeAny): boolean {
-    // Kiểm tra nếu schema là object, array, record, map (có thể chứa JSON)
     return SchemaTypeChecker.isObjectSchema(schema) || 
            SchemaTypeChecker.isArraySchema(schema) ||
            SchemaTypeChecker.isRecordSchema(schema) ||
            SchemaTypeChecker.isMapSchema(schema);
   }
 
-  /**
-   * Preprocess data to parse JSON strings and convert types before validation
-   * Handles: JSON strings, nested objects/arrays/records/maps, boolean/number/date conversions
-   */
   static preprocessData(data: any, schema: z.ZodSchema): any {
     if (!data) return data;
     
-    // Handle arrays - preprocess each element
     if (Array.isArray(data)) {
       return data.map(item => this.preprocessData(item, schema));
     }
     
-    // Handle non-object types
     if (typeof data !== 'object') return data;
 
     const preprocessed = { ...data };
@@ -411,13 +376,10 @@ export class DynamicDataBuilder {
       const fieldSchema = this.unwrapOptionalSchema(schemaShape[key]);
 
       if (fieldSchema && value !== null && value !== undefined) {
-        // 1. Parse JSON strings for object/array/record/map fields
         if (typeof value === 'string' && this.isJsonSerializableSchema(fieldSchema)) {
           try {
             const potentialJson = JSON.parse(value);
-            // Only parse if result is object or array
             if (Array.isArray(potentialJson) || typeof potentialJson === 'object') {
-              // Xử lý đặc biệt cho Map
               if (SchemaTypeChecker.isMapSchema(fieldSchema)) {
                 preprocessed[key] = new Map(Object.entries(potentialJson));
               } else {
@@ -425,18 +387,15 @@ export class DynamicDataBuilder {
               }
             }
           } catch {
-            // Not valid JSON, keep as string
+            // Not valid JSON
           }
         }
         
-        // 2. Handle nested objects/arrays/records - recursively preprocess
         if (typeof value === 'object' && this.isJsonSerializableSchema(fieldSchema)) {
           if (value instanceof Map) {
-            // Map - chuyển thành object để xử lý
             const obj = Object.fromEntries(value);
             preprocessed[key] = this.preprocessData(obj, fieldSchema);
           } else if (Array.isArray(value)) {
-            // Array of items - preprocess each item if schema has element type
             const elementSchema = this.getArrayElementSchema(fieldSchema);
             if (elementSchema) {
               preprocessed[key] = value.map(item => 
@@ -446,12 +405,10 @@ export class DynamicDataBuilder {
               );
             }
           } else if (value !== null) {
-            // Nested object/record - recursively preprocess
             preprocessed[key] = this.preprocessData(value, fieldSchema);
           }
         }
         
-        // 3. Convert boolean from number/string (1/0, '1'/'0', 'true'/'false')
         if (SchemaTypeChecker.isBooleanSchema(fieldSchema)) {
           if (typeof value === 'number') {
             preprocessed[key] = value === 1;
@@ -465,7 +422,6 @@ export class DynamicDataBuilder {
           }
         }
         
-        // 4. Convert number from string
         if (SchemaTypeChecker.isNumberSchema(fieldSchema)) {
           if (typeof value === 'string') {
             const num = Number(value);
@@ -475,7 +431,6 @@ export class DynamicDataBuilder {
           }
         }
         
-        // 5. Convert date from string/timestamp
         if (SchemaTypeChecker.isDateSchema(fieldSchema)) {
           if (typeof value === 'number') {
             preprocessed[key] = new Date(value);
@@ -487,9 +442,7 @@ export class DynamicDataBuilder {
           }
         }
 
-        // 6. Xử lý Map đặc biệt
         if (SchemaTypeChecker.isMapSchema(fieldSchema) && value instanceof Map) {
-          // Map đã được xử lý ở trên, chỉ cần đảm bảo nó được giữ nguyên
           preprocessed[key] = value;
         }
       }
@@ -498,18 +451,13 @@ export class DynamicDataBuilder {
     return preprocessed;
   }
 
-  /**
-   * Unwrap optional schema to get the inner type
-   */
   private static unwrapOptionalSchema(schema: z.ZodTypeAny | undefined): z.ZodTypeAny | undefined {
     if (!schema) return undefined;
     
-    // Handle ZodOptional
     if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
       return schema._def.innerType;
     }
     
-    // Handle ZodDefault
     if (schema instanceof z.ZodDefault) {
       return schema._def.innerType;
     }
@@ -517,15 +465,11 @@ export class DynamicDataBuilder {
     return schema;
   }
 
-  /**
-   * Get element schema from array schema
-   */
   private static getArrayElementSchema(schema: z.ZodTypeAny): z.ZodTypeAny | undefined {
     if (schema instanceof z.ZodArray) {
       return schema._def.type;
     }
     
-    // Handle optional/nullable arrays
     const unwrapped = this.unwrapOptionalSchema(schema);
     if (unwrapped instanceof z.ZodArray) {
       return unwrapped._def.type;
@@ -534,14 +478,10 @@ export class DynamicDataBuilder {
     return undefined;
   }
 
-  /**
-   * Try to parse JSON string and preprocess if successful
-   */
   private static tryParseJson(value: string, schema: z.ZodTypeAny): any {
     try {
       const parsed = JSON.parse(value);
       if (Array.isArray(parsed) || typeof parsed === 'object') {
-        // Xử lý đặc biệt cho Map
         if (SchemaTypeChecker.isMapSchema(schema)) {
           return new Map(Object.entries(parsed));
         }
@@ -554,50 +494,78 @@ export class DynamicDataBuilder {
   }
 }
 
-export class UserDODatabase {  
+export class D1DatabaseManager {  
   private tables = new Map<string, GenericTable<any>>();
   private tableConfigs = new Map<string, TableConfig>();
   private organizationContext?: string;
   private idCounters = new Map<string, number>();
 
   constructor(
-    private storage: DurableObjectStorage,
+    private db: D1Database, // Thay storage.sql bằng D1Database
     private currentUserId: string,
     private broadcast?: (event: string, data: any) => void
   ) { 
-    // Khởi tạo ID counters từ storage
     this.initializeIdCounters();
   }
 
   private async initializeIdCounters(): Promise<void> {
     try {
-      const counters = await this.storage.get<Record<string, number>>('_id_counters');
-      if (counters) {
-        for (const [tableName, counter] of Object.entries(counters)) {
-          this.idCounters.set(tableName, counter);
+      // D1 không có storage, nên chúng ta dùng metadata table
+      const result = await this.db.prepare(
+        `SELECT table_name, last_id FROM _id_counters`
+      ).all<{ table_name: string; last_id: number }>();
+
+      if (result.results) {
+        for (const row of result.results) {
+          this.idCounters.set(row.table_name, row.last_id);
         }
       }
     } catch (error) {
-      console.error('Failed to initialize ID counters:', error);
+      // Table chưa tồn tại, tạo mới
+      await this.createMetadataTables();
     }
   }
 
+  private async createMetadataTables(): Promise<void> {
+    await this.db.exec(`
+      CREATE TABLE IF NOT EXISTS _id_counters (
+        table_name TEXT PRIMARY KEY,
+        last_id INTEGER DEFAULT 0
+      );
+      
+      CREATE TABLE IF NOT EXISTS _table_metadata (
+        table_name TEXT PRIMARY KEY,
+        schema_version INTEGER DEFAULT 1,
+        created_at INTEGER DEFAULT (unixepoch()),
+        updated_at INTEGER DEFAULT (unixepoch())
+      );
+    `);
+  }
+
   private async saveIdCounters(): Promise<void> {
-    const counters: Record<string, number> = {};
-    this.idCounters.forEach((value, key) => {
-      counters[key] = value;
-    });
-    await this.storage.put('_id_counters', counters);
+    // Dùng batch để update tất cả counters
+    const statements: D1PreparedStatement[] = [];
+    
+    for (const [tableName, counter] of this.idCounters.entries()) {
+      statements.push(
+        this.db.prepare(`
+          INSERT INTO _id_counters (table_name, last_id) 
+          VALUES (?, ?)
+          ON CONFLICT(table_name) DO UPDATE SET last_id = excluded.last_id
+        `).bind(tableName, counter)
+      );
+    }
+    
+    if (statements.length > 0) {
+      await this.db.batch(statements);
+    }
   }
 
   private async getNextId(tableName: string): Promise<number> {
-    // Lấy counter hiện tại hoặc khởi tạo bằng 1
+    // D1 có AUTOINCREMENT, nhưng chúng ta cần quản lý counter riêng cho logic
     let currentCounter = this.idCounters.get(tableName) || 0;
-    
-    // Tăng counter lên 1
     currentCounter++;
     
-    // Lưu counter mới
     this.idCounters.set(tableName, currentCounter);
     await this.saveIdCounters();
     
@@ -619,12 +587,11 @@ export class UserDODatabase {
   ): z.ZodSchema {
     let extendedSchema = baseSchema;
 
-    // Thêm auto fields vào schema
     if (options.autoFields) {
       const extensions: any = {};
 
       if (options.autoFields.id) {
-        // ID giờ là số tự tăng
+        // D1 sẽ tự động tăng ID nếu column là INTEGER PRIMARY KEY
         extensions.id = z.number().optional();
       }
 
@@ -646,37 +613,33 @@ export class UserDODatabase {
 
     return extendedSchema;
   }  
-  // Thêm hàm getTable với type inference tự động từ tableConfigs
-  getTable(table: string): GenericTable<any> | undefined {
+
+  getTable<T>(table: string): GenericTable<T> | undefined {
     const tableInstance = this.tables.get(table);
     if (!tableInstance) {
       return undefined;
     }
     
-    // Tự động lấy kiểu từ tableConfigs
     const config = this.tableConfigs.get(table);
     if (config) {
-      // Ép kiểu dựa trên schema trong tableConfigs
-      type InferredType = z.infer<typeof config.schema>;
-      return tableInstance as GenericTable<InferredType>;
+      return tableInstance as GenericTable<T>;
     }
     
-    // Nếu không có config, trả về với kiểu any
     return tableInstance;
   }
+
   table<T extends z.ZodSchema>(
     name: string,
     schema: T,
     options: TableOptions = {}
   ): GenericTable<z.infer<T>> {
     if (!this.tables.has(name)) {
-      // Register table configuration
       this.registerTable(name, schema, options);
       
       const table = new GenericTable<z.infer<T>>(
         name,
         schema,
-        this.storage,
+        this.db, // Truyền D1Database thay vì storage
         this.currentUserId,
         () => options.organizationScoped ? this.organizationContext : undefined,
         this.broadcast
@@ -688,7 +651,7 @@ export class UserDODatabase {
     return this.tables.get(name)! as GenericTable<z.infer<T>>;
   }
 
-  // DYNAMIC OPERATIONS METHODS
+  // DYNAMIC OPERATIONS METHODS - ADAPTED FOR D1
   async dynamicInsert(tableName: string, data: any): Promise<any> {
     const config = this.tableConfigs.get(tableName);
     if (!config) {
@@ -702,8 +665,18 @@ export class UserDODatabase {
       getNextId: (table) => this.getNextId(table),
       tableName
     });
+    
     const operation = DynamicSchemaManager.createInsertOperation(tableName, processedData);
-    await this.execTransaction([operation]);
+    await this.execD1SQL(operation.sql, operation.params);
+    
+    // Lấy ID vừa insert
+    if (processedData.id === undefined) {
+      const lastIdResult = await this.db.prepare('SELECT last_insert_rowid() as id').first<{ id: number }>();
+      if (lastIdResult) {
+        processedData.id = lastIdResult.id;
+      }
+    }
+    
     return processedData;
   }
 
@@ -712,11 +685,13 @@ export class UserDODatabase {
     if (!config) {
       throw new Error(`Table ${tableName} not registered`);
     }
-    const idData = await this.dynamicSelect(tableName, { field: 'id', operator: '=', value: Number(id) });
-    if (idData.length === 0) {
+    
+    const existingData = await this.dynamicSelect(tableName, { field: 'id', operator: '=', value: Number(id) });
+    if (existingData.length === 0) {
       throw new Error(`No record found with id: ${id}`);
     }
-    const updateData = { ...idData[0], ...data };
+    
+    const updateData = { ...existingData[0], ...data };
     const extendedSchema = this.createExtendedSchema(config.schema, config.options);
 
     const processedData = await DynamicDataBuilder.buildData(updateData, extendedSchema, config.options, {
@@ -725,17 +700,18 @@ export class UserDODatabase {
       operation: 'update',
       tableName
     });
+    
     const operation = DynamicSchemaManager.createUpdateOperation(
       tableName, 
       id, 
       processedData
     );
-    await this.execTransaction([operation]);
+    
+    await this.execD1SQL(operation.sql, operation.params);
     return processedData;
   }
 
   async dynamicUpsert(tableName: string, data: any, conflictField?: string): Promise<any> {
-    
     const config = this.tableConfigs.get(tableName);
     if (!config) {
       throw new Error(`Table ${tableName} not registered`);
@@ -763,7 +739,16 @@ export class UserDODatabase {
       conflictFieldToUse
     );
     
-    await this.execTransaction([operation]);
+    await this.execD1SQL(operation.sql, operation.params);
+    
+    // Lấy ID nếu là insert mới
+    if (processedData.id === undefined) {
+      const lastIdResult = await this.db.prepare('SELECT last_insert_rowid() as id').first<{ id: number }>();
+      if (lastIdResult) {
+        processedData.id = lastIdResult.id;
+      }
+    }
+    
     return processedData;
   }
 
@@ -774,7 +759,7 @@ export class UserDODatabase {
     }
     
     const operation = DynamicSchemaManager.createDeleteByIdOperation(tableName, id);
-    await this.execTransaction([operation]);
+    await this.execD1SQL(operation.sql, operation.params);
   }
 
   async dynamicDeleteWhere(
@@ -787,7 +772,7 @@ export class UserDODatabase {
     }
 
     const operation = DynamicSchemaManager.createDeleteOperation(tableName, where);
-    await this.execTransaction([operation]);
+    await this.execD1SQL(operation.sql, operation.params);
   }
 
   async dynamicSelect(
@@ -811,10 +796,13 @@ export class UserDODatabase {
       offset
     );
 
-    const results = await this.execSelectSQL(operation.sql, operation.params);        
+    const result = await this.db.prepare(operation.sql).bind(...operation.params).all();
+    
+    if (!result.results) {
+      return [];
+    }
 
-    // Parse results back to validated objects
-    return results.map(row => 
+    return result.results.map(row => 
       DynamicDataBuilder.parseFromDatabase(row, extendedSchema)
     );
   }
@@ -826,11 +814,10 @@ export class UserDODatabase {
     }
     const extendedSchema = this.createExtendedSchema(config.schema, config.options);
 
-    const operations: DynamicOperation[] = [];
+    const statements: D1PreparedStatement[] = [];
     const results: any[] = [];
     
     for (const data of dataArray) {
-      
       const processedData = await DynamicDataBuilder.buildData(data, extendedSchema, config.options, {
         currentUserId: this.currentUserId,
         organizationId: this.organizationContext,
@@ -844,15 +831,21 @@ export class UserDODatabase {
         processedData
       );
 
-      operations.push(operation);
+      statements.push(this.db.prepare(operation.sql).bind(...operation.params));
       results.push(processedData);
     }
 
-    await this.execTransaction(operations);
+    await this.db.batch(statements);
+    
+    // Lấy IDs cho các record vừa insert
+    if (results.some(r => r.id === undefined)) {
+      // Batch insert không trả về IDs, cần query lại
+      // Hoặc có thể sử dụng RETURNING clause nếu D1 hỗ trợ
+    }
+    
     return results;
   }
 
-  // BATCH OPERATIONS WITH MULTIPLE TABLES
   async dynamicMultiTableTransaction(operations: Array<{
     table?: string;
     operation: 'insert' | 'update' | 'upsert' | 'delete' | 'sql';
@@ -861,23 +854,24 @@ export class UserDODatabase {
     conflictField?: string;
     where?: { field: string; operator: string; value: any };
   }>): Promise<any[]> {
-    const sqlOperations: DynamicOperation[] = [];
+    const statements: D1PreparedStatement[] = [];
     const results: any[] = [];
 
     for (const op of operations) {
-      
-      let sqlOp: DynamicOperation;
       let config: TableConfig | undefined;
       let extendedSchema: any;
       
       switch (op.operation) {
         case 'insert':
-          if (!op.data) throw new Error('Data required for insert operation');
-          if (!op.table) throw new Error('Table required for insert operation'); 
+          if (!op.data || !op.table) {
+            throw new Error('Table and data required for insert operation');
+          }
+          
           config = this.tableConfigs.get(op.table);
           if (!config) {
             throw new Error(`Table ${op.table} not registered`);
           }
+          
           extendedSchema = this.createExtendedSchema(config.schema, config.options);
           const insertData = await DynamicDataBuilder.buildData(op.data, extendedSchema, config.options, {
             currentUserId: this.currentUserId,
@@ -886,39 +880,45 @@ export class UserDODatabase {
             getNextId: (table) => this.getNextId(table),
             tableName: op.table
           });
-          sqlOp = DynamicSchemaManager.createInsertOperation(op.table!, insertData);
+          
+          const insertOp = DynamicSchemaManager.createInsertOperation(op.table, insertData);
+          statements.push(this.db.prepare(insertOp.sql).bind(...insertOp.params));
           results.push(insertData);
-          sqlOperations.push(sqlOp);
           break;
 
         case 'update':
-          if (!op.id) throw new Error('ID required for update operation');
-          if (!op.data) throw new Error('Data required for update operation');     
-          if (!op.table) throw new Error('Table required for update operation'); 
+          if (!op.id || !op.data || !op.table) {
+            throw new Error('Table, ID and data required for update operation');
+          }
+          
           config = this.tableConfigs.get(op.table);
           if (!config) {
             throw new Error(`Table ${op.table} not registered`);
           }
+          
           extendedSchema = this.createExtendedSchema(config.schema, config.options);
-               
           const updateData = await DynamicDataBuilder.buildData(op.data, extendedSchema, config.options, {
             currentUserId: this.currentUserId,
             organizationId: this.organizationContext,
             operation: 'update',
             tableName: op.table
           });
-          sqlOp = DynamicSchemaManager.createUpdateOperation(op.table, op.id, updateData);
+          
+          const updateOp = DynamicSchemaManager.createUpdateOperation(op.table, op.id, updateData);
+          statements.push(this.db.prepare(updateOp.sql).bind(...updateOp.params));
           results.push(updateData);
-          sqlOperations.push(sqlOp);
           break;
 
         case 'upsert':
-          if (!op.data) throw new Error('Data required for upsert operation');
-          if (!op.table) throw new Error('Table required for upsert operation'); 
+          if (!op.data || !op.table) {
+            throw new Error('Table and data required for upsert operation');
+          }
+          
           config = this.tableConfigs.get(op.table);
           if (!config) {
             throw new Error(`Table ${op.table} not registered`);
           }
+          
           extendedSchema = this.createExtendedSchema(config.schema, config.options);
           const upsertData = await DynamicDataBuilder.buildData(op.data, extendedSchema, config.options, {
             currentUserId: this.currentUserId,
@@ -927,54 +927,91 @@ export class UserDODatabase {
             getNextId: (table) => this.getNextId(table),
             tableName: op.table
           });
+          
           const conflictField = op.conflictField || config.options.conflictField;
-          if (!conflictField) throw new Error('Conflict field required for upsert operation');
-          sqlOp = DynamicSchemaManager.createUpsertOperation(op.table, upsertData, op.data, conflictField);
+          if (!conflictField) {
+            throw new Error('Conflict field required for upsert operation');
+          }
+          
+          const updateDataForUpsert = DynamicDataBuilder.transformData(
+            DynamicDataBuilder.preprocessData(op.data, config.schema), 
+            config.schema
+          );
+          
+          const upsertOp = DynamicSchemaManager.createUpsertOperation(
+            op.table, 
+            upsertData, 
+            updateDataForUpsert,
+            conflictField
+          );
+          
+          statements.push(this.db.prepare(upsertOp.sql).bind(...upsertOp.params));
           results.push(upsertData);
-          sqlOperations.push(sqlOp);
           break;
 
         case 'delete':
-          if (!op.table) throw new Error('Table required for upsert operation'); 
+          if (!op.table) {
+            throw new Error('Table required for delete operation');
+          }
+          
           config = this.tableConfigs.get(op.table);
           if (!config) {
             throw new Error(`Table ${op.table} not registered`);
           }
+          
           if (op.id) {
-            // Delete by ID
-            sqlOp = DynamicSchemaManager.createDeleteByIdOperation(op.table, op.id);
+            const deleteOp = DynamicSchemaManager.createDeleteByIdOperation(op.table, op.id);
+            statements.push(this.db.prepare(deleteOp.sql).bind(...deleteOp.params));
             results.push({ id: op.id, deleted: true });
           } else if (op.where) {
-            // Delete by condition
-            sqlOp = DynamicSchemaManager.createDeleteOperation(op.table, op.where);
+            const deleteOp = DynamicSchemaManager.createDeleteOperation(op.table, op.where);
+            statements.push(this.db.prepare(deleteOp.sql).bind(...deleteOp.params));
             results.push({ where: op.where, deleted: true });
           } else {
             throw new Error('ID or where condition required for delete operation');
           }
-          sqlOperations.push(sqlOp);
           break;
+          
         case 'sql':
-          if (!op.data) throw new Error('Data required for insert operation');
+          if (!op.data) {
+            throw new Error('SQL operation data required');
+          }
           for (const itemOp of op.data) {
-            sqlOperations.push(itemOp);  
+            statements.push(this.db.prepare(itemOp.sql).bind(...itemOp.params));
           }
           break;
+          
         default:
           throw new Error(`Unknown operation: ${op.operation}`);
       }      
     }
 
-    await this.execTransaction(sqlOperations);
+    await this.db.batch(statements);
     return results;
   }
 
-  // EXISTING METHODS (with minor improvements)
+  // D1-SPECIFIC METHODS
+  private async execD1SQL(sql: string, params: any[] = []): Promise<D1Result> {
+    try {
+      return await this.db.prepare(sql).bind(...params).run();
+    } catch (error) {
+      console.error(`Error executing SQL: ${sql}`, error);
+      throw error;
+    }
+  }
 
-  get raw() {
-    return this.storage.sql;
-  } 
+  async rawQuery<T = any>(sql: string, params: any[] = []): Promise<T[]> {
+    try {
+      const result = await this.db.prepare(sql).bind(...params).all<T>();
+      return result.results || [];
+    } catch (error) {
+      console.error(`Error in rawQuery: ${sql}`, error);
+      throw error;
+    }
+  }
 
-  private ensureTableExists(name: string, schema: z.ZodSchema, options: TableOptions): void {
+  // TABLE MANAGEMENT
+  private async ensureTableExists(name: string, schema: z.ZodSchema, options: TableOptions): Promise<void> {
     const schemaShape = this.extractSchemaShape(schema);
     const columns = this.buildColumnDefinitions(schemaShape, options);
 
@@ -983,54 +1020,46 @@ export class UserDODatabase {
     )`;
 
     try {
-      this.storage.sql.exec(createSQL);      
+      await this.db.exec(createSQL);
     } catch (err) {
-      console.error(`Error in ensureTableExists, sql: ${createSQL}`);
+      console.error(`Error creating table ${name}:`, err);
       throw err;
     }
-    this.createIndexes(name, options);
+    
+    await this.createIndexes(name, options);
   }
   
   private extractSchemaShape(schema: z.ZodSchema): Record<string, z.ZodTypeAny> {
-    // Base case: ZodObject
     if (schema instanceof z.ZodObject) {
       return schema.shape;
     }
     
-    // ZodEffects từ .refine(), .transform(), etc.
     if (schema instanceof z.ZodEffects) {
       return this.extractSchemaShape(schema._def.schema);
     }
     
-    // ZodOptional, ZodDefault, ZodNullable
     if (schema instanceof z.ZodOptional || 
         schema instanceof z.ZodDefault || 
         schema instanceof z.ZodNullable) {
       return this.extractSchemaShape(schema._def.innerType);
     }
     
-    // ZodArray
     if (schema instanceof z.ZodArray) {
-      // Mảng được lưu dưới dạng JSON string
       return {};
     }
     
-    // ZodRecord - được lưu dưới dạng JSON string
     if (schema instanceof z.ZodRecord) {
       return {};
     }
     
-    // ZodMap - được lưu dưới dạng JSON string
     if (schema instanceof z.ZodMap) {
       return {};
     }
     
-    // ZodTuple - được lưu dưới dạng JSON string
     if (schema instanceof z.ZodTuple) {
       return {};
     }
     
-    // ZodLazy
     if (schema instanceof z.ZodLazy) {
       try {
         return this.extractSchemaShape(schema._def.getter());
@@ -1039,11 +1068,9 @@ export class UserDODatabase {
       }
     }
     
-    // ZodUnion, ZodIntersection - try to extract shape from all options
     if (schema instanceof z.ZodUnion) {
       const options = schema._def.options as z.ZodTypeAny[];
       const allShapes = options.map(opt => this.extractSchemaShape(opt));
-      // Merge all shapes
       const merged: Record<string, z.ZodTypeAny> = {};
       allShapes.forEach(shape => {
         Object.assign(merged, shape);
@@ -1065,7 +1092,7 @@ export class UserDODatabase {
 
     // Add auto fields based on configuration
     if (options.autoFields?.id !== false) {
-      // ID giờ là số tự tăng, sử dụng INTEGER PRIMARY KEY AUTOINCREMENT cho SQLite
+      // D1 uses AUTOINCREMENT for auto-incrementing IDs
       columns.push('"id" INTEGER PRIMARY KEY AUTOINCREMENT');
     }
 
@@ -1105,10 +1132,9 @@ export class UserDODatabase {
   }
 
   private getColumnType(zodType: z.ZodTypeAny): string {    
-    // Recursively unwrap Zod types
     const unwrappedType = this.unwrapZodType(zodType);
         
-    // Map to SQLite types
+    // Map to SQLite types (D1 uses SQLite)
     if (unwrappedType instanceof z.ZodString) {
       return 'TEXT';
     } else if (unwrappedType instanceof z.ZodNumber) {
@@ -1124,7 +1150,6 @@ export class UserDODatabase {
     } else if (unwrappedType instanceof z.ZodNativeEnum) {
       return 'TEXT';
     } else if (unwrappedType instanceof z.ZodLiteral) {
-      // Check literal value type
       const value = (unwrappedType as any)._def.value;
       if (typeof value === 'boolean') {
         return 'INTEGER';
@@ -1138,21 +1163,15 @@ export class UserDODatabase {
                unwrappedType instanceof z.ZodArray ||
                unwrappedType instanceof z.ZodTuple ||
                unwrappedType instanceof z.ZodObject) {
-      // Record, Map, Array, Tuple, Object đều được lưu dưới dạng JSON string
       return 'TEXT';
     } else {
-      // Default cho các type khác
       return 'TEXT';
     }
   }
 
-  /**
-   * Recursively unwrap Zod types
-   */
   private unwrapZodType(zodType: z.ZodTypeAny): z.ZodTypeAny {
     const def = (zodType as any)._def;
     
-    // Handle ZodEffects (preprocess/transform/refine)
     if (zodType instanceof z.ZodEffects) {
       if (def.schema) {
         return this.unwrapZodType(def.schema);
@@ -1162,7 +1181,6 @@ export class UserDODatabase {
       }
     }
     
-    // Handle other wrapper types
     if (zodType instanceof z.ZodOptional ||
         zodType instanceof z.ZodNullable ||
         zodType instanceof z.ZodDefault ||
@@ -1182,7 +1200,6 @@ export class UserDODatabase {
       }
     }
     
-    // Handle ZodLazy
     if (zodType instanceof z.ZodLazy && def.getter) {
       try {
         return this.unwrapZodType(def.getter());
@@ -1191,50 +1208,39 @@ export class UserDODatabase {
       }
     }
     
-    // Handle pipeline
     if ((zodType as any).constructor.name === 'ZodPipeline' && def.in) {
       return this.unwrapZodType(def.in);
     }
     
-    // Handle unions
     if (zodType instanceof z.ZodUnion) {
       const options = def.options as z.ZodTypeAny[];
       const unwrappedTypes = options.map(opt => this.unwrapZodType(opt));
       
-      // Try to find a boolean type in the union
       const booleanType = unwrappedTypes.find(t => t instanceof z.ZodBoolean);
       if (booleanType) return booleanType;
       
-      // Try to find a number type
       const numberType = unwrappedTypes.find(t => t instanceof z.ZodNumber);
       if (numberType) return numberType;
       
-      // Try to find a string type
       const stringType = unwrappedTypes.find(t => t instanceof z.ZodString);
       if (stringType) return stringType;
       
-      // Try to find a record type
       const recordType = unwrappedTypes.find(t => t instanceof z.ZodRecord);
       if (recordType) return recordType;
       
-      // Try to find an array type
       const arrayType = unwrappedTypes.find(t => t instanceof z.ZodArray);
       if (arrayType) return arrayType;
       
-      // Try to find an object type
       const objectType = unwrappedTypes.find(t => t instanceof z.ZodObject);
       if (objectType) return objectType;
       
-      // Return first type
       return unwrappedTypes[0] || z.string();
     }
     
-    // Handle intersections
     if (zodType instanceof z.ZodIntersection) {
       const left = this.unwrapZodType(def.left);
       const right = this.unwrapZodType(def.right);
       
-      // Prefer boolean > number > string > record/array/object > other
       if (left instanceof z.ZodBoolean || right instanceof z.ZodBoolean) {
         return z.boolean();
       }
@@ -1257,7 +1263,6 @@ export class UserDODatabase {
       return left;
     }
     
-    // Handle discriminated unions
     if (zodType instanceof z.ZodDiscriminatedUnion) {
       const allTypes: z.ZodTypeAny[] = [];
       for (const options of def.options.values()) {
@@ -1266,7 +1271,6 @@ export class UserDODatabase {
         );
       }
       
-      // Similar logic to regular union
       const booleanType = allTypes.find(t => t instanceof z.ZodBoolean);
       if (booleanType) return booleanType;
       
@@ -1288,27 +1292,23 @@ export class UserDODatabase {
       return allTypes[0] || z.string();
     }
     
-    // Return the type as-is
     return zodType;
   }
 
-  /**
-   * Check if a ZodNumber type represents an integer
-   */
   private isIntegerType(zodNumber: z.ZodNumber): boolean {
     const checks = (zodNumber as any)._def.checks || [];
     return checks.some((check: any) => check.kind === 'int');
   }
   
-  private createIndexes(tableName: string, options: TableOptions): void {
+  private async createIndexes(tableName: string, options: TableOptions): Promise<void> {
     // Create regular indexes
     for (const index of options.indexes || []) {
       const indexSQL = `CREATE INDEX IF NOT EXISTS "idx_${tableName}_${index}" ON "${tableName}" ("${index}")`;
       try {
-        this.storage.sql.exec(indexSQL);
+        await this.db.exec(indexSQL);
       }
       catch (e) {
-        console.error(`Error in createIndexes, sql: ${indexSQL}`);
+        console.error(`Error creating index for ${tableName}:`, e);
         throw e;
       }                        
     }
@@ -1317,10 +1317,10 @@ export class UserDODatabase {
     for (const uniqueIndex of options.uniqueIndexes || []) {
       const uniqueIndexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS "uidx_${tableName}_${uniqueIndex}" ON "${tableName}" ("${uniqueIndex}")`;
       try {
-        this.storage.sql.exec(uniqueIndexSQL);
+        await this.db.exec(uniqueIndexSQL);
       }
       catch (e) {
-        console.error(`Error in createIndexes, sql: ${uniqueIndexSQL}`);
+        console.error(`Error creating unique index for ${tableName}:`, e);
         throw e;
       }                  
     }
@@ -1329,55 +1329,101 @@ export class UserDODatabase {
     if (options.userScoped && options.organizationScoped) {
       const compositeUniqueSQL = `CREATE UNIQUE INDEX IF NOT EXISTS "uidx_${tableName}_user_org" ON "${tableName}" ("user_id", "organization_id")`;
       try {
-        this.storage.sql.exec(compositeUniqueSQL);
+        await this.db.exec(compositeUniqueSQL);
       }
       catch (e) {
-        console.error(`Error in createIndexes, sql: ${compositeUniqueSQL}`);
+        console.error(`Error creating composite index for ${tableName}:`, e);
         throw e;
       }      
     }
   }
 
+  // D1 TRANSACTION HANDLING
   async execTransaction(operations: Array<{ sql: string; params?: any[] }>): Promise<void> {
     if (!operations.length) {
       throw new Error('Empty transaction');
-    }    
-    await this.storage.transactionSync(async () => {
-      for (const op of operations) {
-        try {
-          this.storage.sql.exec(op.sql, ...(op.params || []));              
-        }
-        catch (e) {
-          console.error(`Error in execTransaction, sql: ${op.sql}, params: ${JSON.stringify((op.params || []))}`);
-          throw e;
-        }
-      }        
-    });
+    }
+    
+    const statements: D1PreparedStatement[] = operations.map(op => 
+      this.db.prepare(op.sql).bind(...(op.params || []))
+    );
+    
+    try {
+      await this.db.batch(statements);
+    } catch (error) {
+      console.error('Transaction failed:', error);
+      throw error;
+    }
   }
 
   async execSelectSQL(sql: string, params: any[] = [], table?: string): Promise<any[]> {
     if (!sql.trim().toUpperCase().startsWith('SELECT')) {
       throw new Error('Only SELECT statements are allowed in execSelectSQL');
-    }      
-    let cursor;
+    }
+    
     try {
-      cursor = this.storage.sql.exec(sql, ...params);
-    }
-    catch (e) {
-      console.error(`Error in execSelectSQL, sql: ${sql}, params: ${JSON.stringify(params)}`);
-      throw e;
-    }
-    const result = cursor.toArray();
-    if (table && table !== '') {
-      const config = this.tableConfigs.get(table);
-      if (!config) {
-        throw new Error(`Table ${table} not registered`);
+      const result = await this.db.prepare(sql).bind(...params).all();
+      
+      if (table && table !== '') {
+        const config = this.tableConfigs.get(table);
+        if (!config) {
+          throw new Error(`Table ${table} not registered`);
+        }
+        
+        return (result.results || []).map(row => 
+          DynamicDataBuilder.parseFromDatabase(row, config.schema)
+        );
       }
-      console.log(`Parsing ${table} results: ${JSON.stringify(result)}`);
-      return result.map(row => 
-        DynamicDataBuilder.parseFromDatabase(row, config.schema)
-      );
+      
+      return result.results || [];
+    } catch (error) {
+      console.error(`Error executing SQL: ${sql}`, error);
+      throw error;
     }
-    return result;
+  }
+
+  // UTILITY METHODS
+  async getTableInfo(tableName: string): Promise<any> {
+    const result = await this.db.prepare(`
+      SELECT * FROM pragma_table_info(?)
+    `).bind(tableName).all();
+    
+    return result.results || [];
+  }
+
+  async getTableRowCount(tableName: string): Promise<number> {
+    const result = await this.db.prepare(`
+      SELECT COUNT(*) as count FROM "${tableName}"
+    `).first<{ count: number }>();
+    
+    return result?.count || 0;
+  }
+
+  async vacuum(): Promise<void> {
+    await this.db.exec('VACUUM');
+  }
+
+  async exportSchema(): Promise<string> {
+    const tables = Array.from(this.tableConfigs.keys());
+    const schemaStatements: string[] = [];
+    
+    for (const tableName of tables) {
+      const tableInfo = await this.getTableInfo(tableName);
+      const config = this.tableConfigs.get(tableName);
+      
+      if (config && tableInfo.length > 0) {
+        const columns = tableInfo.map((col: any) => {
+          let colDef = `"${col.name}" ${col.type}`;
+          if (col.pk) colDef += ' PRIMARY KEY';
+          if (col.notnull) colDef += ' NOT NULL';
+          if (col.dflt_value !== null) colDef += ` DEFAULT ${col.dflt_value}`;
+          return colDef;
+        }).join(',\n  ');
+        
+        schemaStatements.push(`CREATE TABLE "${tableName}" (\n  ${columns}\n);`);
+      }
+    }
+    
+    return schemaStatements.join('\n\n');
   }
 }

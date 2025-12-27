@@ -19,9 +19,9 @@ export const ShardPerformanceSchema = z.object({
 });
 
 export const BatchMetricsSchema = z.object({
-  batchId: z.string().uuid(),
+  batchId: z.string(),
   shardName: z.string(),
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   totalUsers: z.number().int().nonnegative(),
   processedUsers: z.number().int().nonnegative(),
   failedUsers: z.number().int().nonnegative(),
@@ -61,7 +61,7 @@ export const UserInactivitySchema = z.object({
 
 // Error Handling
 export const ShardErrorSchema = z.object({
-  errorId: z.string().uuid(),
+  errorId: z.number().int(),
   shardName: z.string(),
   timestamp: z.number().int().positive(),
   type: z.enum([
@@ -77,7 +77,7 @@ export const ShardErrorSchema = z.object({
   stack: z.string().optional(),
   operation: z.string(),
   userId: z.string().optional(),
-  broadcastId: z.string().optional(),
+  broadcastId: z.number().int().optional(),
   batchIndex: z.number().int().optional(),
   autoRetry: z.boolean().default(false),
   retryCount: z.number().int().nonnegative().default(0),
@@ -107,7 +107,7 @@ export const UserCountResponseSchema = z.object({
 
 export const BatchProcessingResponseSchema = z.object({
   shardName: z.string(),
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   totalBatches: z.number().int().positive(),
   totalUsers: z.number().int().nonnegative(),
   estimatedCompletionTime: z.number().int().positive().optional(),

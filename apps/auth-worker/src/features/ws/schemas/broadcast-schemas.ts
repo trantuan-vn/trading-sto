@@ -43,7 +43,7 @@ export const CreateBroadcastSchema = z.object({
 
 // Delivery Tracking
 export const DeliveryRecordSchema = z.object({
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   userId: z.string(),
   deliveredAt: z.number().int().positive(),
   shardName: z.string(),
@@ -58,7 +58,7 @@ export const DeliveryRecordSchema = z.object({
 
 // Analytics
 export const BroadcastAnalyticsSchema = z.object({
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   totalUsers: z.number().int().nonnegative(),
   delivered: z.number().int().nonnegative(),
   pending: z.number().int().nonnegative(),
@@ -85,7 +85,7 @@ export const BroadcastAnalyticsSchema = z.object({
 });
 
 export const DeliveryStatsSchema = z.object({
-  broadcastId: z.string(),
+  broadcastId: z.number().int(),
   totalUsers: z.number().int().nonnegative(),
   delivered: z.number().int().nonnegative(),
   pending: z.number().int().nonnegative(),
