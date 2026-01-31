@@ -16,6 +16,11 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: APP_CONFIG.meta.title,
   description: APP_CONFIG.meta.description,
+  icons: {
+    icon: '/logo.svg', // Cho favicon
+    apple: '/logo.svg', // Cho iOS devices
+    shortcut: '/logo.svg',
+  },
 };
 
 // export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
